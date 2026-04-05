@@ -1,0 +1,123 @@
+stages:
+  - check
+  - build
+  - release
+
+variables:
+  CARGO_HOME: ${CI_PROJECT_DIR}/.cargo
+  RUST_BACKTRACE: "1"
+
+# --- Check ---
+
+typecheck-worker:
+  stage: check
+  image: node:22-slim
+  script:
+    - cd worker && npm ci && npx tsc --noEmit
+  cache:
+    key: worker-${CI_COMMIT_REF_SLUG}
+    paths:
+      - worker/node_modules/
+
+test-sdk:
+  stage: check
+  image: golang:1.23
+  script:
+    - cd sdk && go test -v ./...
+
+check-agent:
+  stage: check
+  image: rust:1.82
+  script:
+    - cd agent && cargo check
+  cache:
+    key: agent-${CI_COMMIT_REF_SLUG}
+    paths:
+      - .cargo/
+      - agent/target/
+
+# --- Build release binaries (on tags only) ---
+
+.build-agent:
+  stage: build
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
+  cache:
+    key: agent-release-${TARGET}
+    paths:
+      - .cargo/
+      - agent/target/
+  artifacts:
+    paths:
+      - agent/target/${TARGET}/release/behest-agent
+    expire_in: 1 week
+
+build-macos-arm64:
+  extends: .build-agent
+  tags: [macos, arm64]
+  variables:
+    TARGET: aarch64-apple-darwin
+  script:
+    - cd agent && cargo build --release
+    - mkdir -p target/${TARGET}/release
+    - cp target/release/behest-agent target/${TARGET}/release/
+
+build-macos-x86_64:
+  extends: .build-agent
+  tags: [macos, x86_64]
+  variables:
+    TARGET: x86_64-apple-darwin
+  script:
+    - cd agent && cargo build --release
+    - mkdir -p target/${TARGET}/release
+    - cp target/release/behest-agent target/${TARGET}/release/
+
+build-linux-amd64:
+  extends: .build-agent
+  image: rust:1.82
+  variables:
+    TARGET: x86_64-unknown-linux-gnu
+  script:
+    - cd agent && cargo build --release --target ${TARGET}
+
+build-linux-arm64:
+  extends: .build-agent
+  image: rust:1.82
+  tags: [arm64]
+  variables:
+    TARGET: aarch64-unknown-linux-gnu
+  script:
+    - apt-get update && apt-get install -y gcc-aarch64-linux-gnu
+    - cd agent
+    - rustup target add ${TARGET}
+    - export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+    - cargo build --release --target ${TARGET}
+
+# --- Release ---
+
+release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
+  needs:
+    - build-macos-arm64
+    - build-macos-x86_64
+    - build-linux-amd64
+    - build-linux-arm64
+  script:
+    - echo "Creating release ${CI_COMMIT_TAG}"
+  release:
+    tag_name: ${CI_COMMIT_TAG}
+    name: "behest ${CI_COMMIT_TAG}"
+    description: "Release ${CI_COMMIT_TAG}"
+    assets:
+      links:
+        - name: behest-agent-macos-arm64
+          url: "${CI_PROJECT_URL}/-/jobs/artifacts/${CI_COMMIT_TAG}/raw/agent/target/aarch64-apple-darwin/release/behest-agent?job=build-macos-arm64"
+        - name: behest-agent-macos-x86_64
+          url: "${CI_PROJECT_URL}/-/jobs/artifacts/${CI_COMMIT_TAG}/raw/agent/target/x86_64-apple-darwin/release/behest-agent?job=build-macos-x86_64"
+        - name: behest-agent-linux-amd64
+          url: "${CI_PROJECT_URL}/-/jobs/artifacts/${CI_COMMIT_TAG}/raw/agent/target/x86_64-unknown-linux-gnu/release/behest-agent?job=build-linux-amd64"
+        - name: behest-agent-linux-arm64
+          url: "${CI_PROJECT_URL}/-/jobs/artifacts/${CI_COMMIT_TAG}/raw/agent/target/aarch64-unknown-linux-gnu/release/behest-agent?job=build-linux-arm64"
