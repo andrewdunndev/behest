@@ -1,0 +1,13 @@
+[
+  {
+    "type": "ntfy",
+    "url": "https://ntfy.sh/behest-requests"
+  },
+  {
+    "type": "webhook",
+    "url": "https://example.com/webhook",
+    "headers": {
+      "Authorization": "Bearer your-token"
+    }
+  }
+]

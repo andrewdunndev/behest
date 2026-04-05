@@ -1,0 +1,50 @@
+[package]
+name = "behest-agent"
+version = "0.1.0"
+edition = "2021"
+description = "behest credential relay agent — system tray daemon"
+license = "MIT"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Crypto: NaCl box (X25519 + XSalsa20-Poly1305)
+crypto_box = "0.9"
+rand = "0.8"
+
+# System tray
+tray-icon = "0.19"
+muda = "0.15"
+
+# Desktop notifications
+notify-rust = "4"
+
+# macOS Keychain
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
+
+# Error handling
+anyhow = "1"
+
+# CLI / config
+clap = { version = "4", features = ["derive"] }
+dirs = "6"
+toml = "0.8"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Base64
+base64 = "0.22"
+
+# UUID
+uuid = { version = "1", features = ["v4"] }

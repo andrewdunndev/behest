@@ -1,0 +1,26 @@
+# Worker
+worker/node_modules/
+worker/dist/
+worker/.wrangler/
+
+# Rust agent
+agent/target/
+
+# Go SDK
+sdk/vendor/
+
+# OS
+.DS_Store
+*.swp
+*.swo
+*~
+
+# IDE
+.idea/
+.vscode/
+*.code-workspace
+
+# Environment
+.env
+.env.local
+.dev.vars

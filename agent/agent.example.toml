@@ -1,0 +1,14 @@
+# behest agent configuration
+# Default location: ~/.config/behest/agent.toml
+
+# Broker URL (required)
+broker_url = "https://behest.example.workers.dev"
+
+# How often to poll the broker for new requests (seconds)
+poll_interval_secs = 2
+
+# Optional: shell command invoked when a new request arrives.
+# Receives request JSON via BEHEST_REQUEST_JSON env var.
+# If the hook writes a credential to stdout and exits 0, the agent
+# auto-submits it. If it exits non-zero, falls back to interactive.
+# on_request_hook = "~/.config/behest/hooks/auto-fulfill.sh"

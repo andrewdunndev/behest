@@ -1,0 +1,12 @@
+name = "behest"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+[vars]
+REQUEST_TTL_SECONDS = "600"
+MAX_CREDENTIAL_BYTES = "65536"
+
+[[kv_namespaces]]
+binding = "REQUESTS"
+id = ""        # Set after `wrangler kv namespace create REQUESTS`
+preview_id = "" # Set after `wrangler kv namespace create REQUESTS --preview`
