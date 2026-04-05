@@ -8,6 +8,7 @@ agent/target/
 
 # Go SDK
 sdk/vendor/
+sdk/behest-smoke
 
 # OS
 .DS_Store

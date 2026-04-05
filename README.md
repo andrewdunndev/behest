@@ -81,6 +81,18 @@ plaintext). A network observer sees TLS.
 
 ### Step 1: Deploy the broker
 
+The quick way (one command, handles everything):
+
+```bash
+cd worker && ./setup.sh
+```
+
+This creates the KV namespace, generates a master key, sets the secret,
+and deploys. It prints the broker URL and master key at the end. Save both.
+
+<details>
+<summary>Manual setup (if you prefer step-by-step)</summary>
+
 ```bash
 cd worker
 npm install
@@ -127,6 +139,8 @@ npx wrangler deploy
 
 Note the URL. You'll need it for enrollment.
 
+</details>
+
 ### Step 2: Build and enroll the agent
 
 ```bash
@@ -151,6 +165,18 @@ You can verify it worked:
 
 ```bash
 ./target/release/behest-agent status
+```
+
+### Step 3: Verify the deployment
+
+Run the smoke test to confirm the full flow works:
+
+```bash
+# Automated (no agent interaction needed):
+BEHEST_URL=https://behest.your-account.workers.dev BEHEST_KEY=YOUR_MASTER_KEY make smoke-test
+
+# Interactive (creates a request, you fulfill it from the agent):
+BEHEST_URL=https://behest.your-account.workers.dev BEHEST_KEY=YOUR_MASTER_KEY make smoke-test-interactive
 ```
 
 ### Step 3: Run the agent
