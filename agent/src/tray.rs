@@ -30,6 +30,12 @@ enum UserEvent {
     Wake,
 }
 
+/// A clickable pending request in the tray menu.
+struct RequestMenuItem {
+    menu_item: MenuItem,
+    request_id: String,
+}
+
 fn load_icon() -> Icon {
     // 16x16 RGBA template icon — white circle, macOS adapts to theme
     let mut rgba = vec![0u8; 16 * 16 * 4];
@@ -47,6 +53,25 @@ fn load_icon() -> Icon {
         }
     }
     Icon::from_rgba(rgba, 16, 16).expect("failed to create icon")
+}
+
+/// Open Terminal.app with `behest-agent fulfill <id>`.
+fn open_terminal_fulfill(request_id: &str) {
+    let agent_bin = std::env::current_exe()
+        .unwrap_or_else(|_| std::path::PathBuf::from("behest-agent"));
+    let script = format!(
+        "tell application \"Terminal\"\n\
+         activate\n\
+         do script \"{} fulfill {}\"\n\
+         end tell",
+        agent_bin.display(),
+        request_id
+    );
+
+    let _ = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(&script)
+        .spawn();
 }
 
 /// Run the agent in GUI mode.
@@ -73,19 +98,22 @@ pub fn run(config: AgentConfig) -> anyhow::Result<()> {
     }));
 
     let pending: Arc<Mutex<Vec<PendingRequest>>> = Arc::new(Mutex::new(Vec::new()));
+    let request_menu_items: Arc<Mutex<Vec<RequestMenuItem>>> =
+        Arc::new(Mutex::new(Vec::new()));
 
+    // Static menu items
     let status_item = MenuItem::new("behest: waiting...", false, None);
     let quit_item = MenuItem::new("Quit", true, None);
     let quit_id = quit_item.id().clone();
 
     let menu = Menu::new();
-    menu.append(&status_item)?;
-    menu.append(&PredefinedMenuItem::separator())?;
-    menu.append(&quit_item)?;
+    menu.append(&status_item).unwrap();
+    menu.append(&PredefinedMenuItem::separator()).unwrap();
+    menu.append(&quit_item).unwrap();
 
     let mut _tray_icon: Option<tray_icon::TrayIcon> = None;
 
-    // Wake the event loop periodically to drain messages
+    // Wake the event loop periodically
     let proxy2 = event_loop.create_proxy();
     rt.spawn(async move {
         loop {
@@ -104,7 +132,27 @@ pub fn run(config: AgentConfig) -> anyhow::Result<()> {
                 UiMessage::NewRequests(requests) => {
                     for req in &requests {
                         notifier::notify_new_request(req);
+
+                        // Add a clickable menu item for this request
+                        let label = format!("  {} — {}", req.service, req.message);
+                        let item = MenuItem::new(
+                            if label.len() > 60 {
+                                format!("{}...", &label[..57])
+                            } else {
+                                label
+                            },
+                            true,
+                            None,
+                        );
+                        // Insert before the separator (index 1)
+                        let _ = menu.insert(&item, 1);
+                        let mut items = request_menu_items.lock().unwrap();
+                        items.push(RequestMenuItem {
+                            menu_item: item,
+                            request_id: req.id.clone(),
+                        });
                     }
+
                     let mut p = pending.lock().unwrap();
                     p.extend(requests);
                     let count = p.len();
@@ -113,6 +161,13 @@ pub fn run(config: AgentConfig) -> anyhow::Result<()> {
                     }
                 }
                 UiMessage::Fulfilled(id) => {
+                    // Remove the menu item for this request
+                    let mut items = request_menu_items.lock().unwrap();
+                    if let Some(pos) = items.iter().position(|i| i.request_id == id) {
+                        let item = items.remove(pos);
+                        let _ = menu.remove(&item.menu_item);
+                    }
+
                     let mut p = pending.lock().unwrap();
                     p.retain(|r| r.id != id);
                     let count = p.len();
@@ -130,12 +185,19 @@ pub fn run(config: AgentConfig) -> anyhow::Result<()> {
             }
         }
 
+        // Handle menu clicks
         while let Ok(event) = MenuEvent::receiver().try_recv() {
             if event.id == quit_id {
                 let _ = cmd_tx.send(WorkerCommand::Quit);
                 _tray_icon.take();
                 *control_flow = ControlFlow::Exit;
                 return;
+            }
+
+            // Check if it's a request item click
+            let items = request_menu_items.lock().unwrap();
+            if let Some(req_item) = items.iter().find(|i| *i.menu_item.id() == event.id) {
+                open_terminal_fulfill(&req_item.request_id);
             }
         }
 

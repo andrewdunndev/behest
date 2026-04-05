@@ -46,6 +46,10 @@ enum Command {
     },
     /// List pending credential requests
     List,
+    /// Check broker connectivity and show agent status
+    Status,
+    /// Rotate the agent's signing key (re-enroll with new keypair)
+    RotateKey,
     /// Fulfill a pending credential request
     Fulfill {
         /// Request ID to fulfill
@@ -108,6 +112,14 @@ fn main() -> anyhow::Result<()> {
         Some(Command::List) => {
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(cmd_list(config))
+        }
+        Some(Command::Status) => {
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(cmd_status(config))
+        }
+        Some(Command::RotateKey) => {
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(cmd_rotate_key(config))
         }
         Some(Command::Fulfill { id, credential }) => {
             let rt = tokio::runtime::Runtime::new()?;
@@ -175,6 +187,78 @@ async fn cmd_enroll(
     println!("Enrolled as \"{}\"", agent_name);
     println!("Config written to {}", config_file.display());
     println!("Run `behest-agent` to start.");
+
+    Ok(())
+}
+
+// --- Subcommand: status ---
+
+async fn cmd_status(config: AgentConfig) -> anyhow::Result<()> {
+    println!("behest-agent {}", env!("CARGO_PKG_VERSION"));
+    println!();
+
+    // Identity
+    match identity::AgentIdentity::load() {
+        Ok(id) => {
+            println!("Identity:  enrolled");
+            println!("Signing key: {}", id.public_key_b64());
+        }
+        Err(_) => {
+            println!("Identity:  not enrolled");
+            println!("  Run `behest-agent enroll <broker-url> <master-key>` to set up.");
+            return Ok(());
+        }
+    }
+    println!();
+
+    // Broker connectivity
+    println!("Broker: {}", config.broker_url);
+    let client = broker::BrokerClient::new(&config);
+    let start = std::time::Instant::now();
+    match client.fetch_pending().await {
+        Ok(requests) => {
+            let elapsed = start.elapsed();
+            println!("Status: connected ({:.0}ms)", elapsed.as_millis());
+            println!("Pending: {} request{}", requests.len(), if requests.len() == 1 { "" } else { "s" });
+        }
+        Err(e) => {
+            println!("Status: unreachable");
+            println!("Error:  {}", e);
+        }
+    }
+
+    // Config path
+    println!();
+    println!("Config: {}", config::default_config_path().display());
+
+    Ok(())
+}
+
+// --- Subcommand: rotate-key ---
+
+async fn cmd_rotate_key(config: AgentConfig) -> anyhow::Result<()> {
+    // Load old identity to confirm we have one
+    let old_id = identity::AgentIdentity::load()?;
+    println!("Current signing key: {}", old_id.public_key_b64());
+
+    // Generate new identity
+    let new_id = identity::AgentIdentity::generate();
+    println!("New signing key:     {}", new_id.public_key_b64());
+
+    // Enroll new key with broker
+    let agent_name = hostname::get()
+        .ok()
+        .and_then(|h| h.into_string().ok())
+        .unwrap_or_else(|| "behest-agent".to_string());
+
+    let client = broker::BrokerClient::new(&config);
+    client.enroll(&new_id, &format!("{} (rotated)", agent_name)).await?;
+
+    // Save new identity (overwrites old)
+    new_id.save()?;
+
+    println!("Key rotated and enrolled. Old key remains enrolled on the broker.");
+    println!("To revoke the old key, remove it from the broker's KV store.");
 
     Ok(())
 }

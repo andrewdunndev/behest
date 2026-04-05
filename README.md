@@ -95,14 +95,19 @@ credential, err := req.Wait(ctx, behest.DefaultPollInterval)
 ## Agent Commands
 
 ```
-behest-agent                     # Run as system tray daemon (default)
-behest-agent run --headless      # Run without GUI (terminal/SSH)
-behest-agent list                # Show pending requests
-behest-agent fulfill <id>        # Fulfill a request interactively
+behest-agent                          # Run as system tray daemon (default)
+behest-agent run --headless           # Run without GUI (terminal/SSH)
+behest-agent enroll <url> <key>       # Enroll with a broker
+behest-agent status                   # Check broker connectivity + identity
+behest-agent list                     # Show pending requests
+behest-agent fulfill <id>             # Fulfill a request interactively
 behest-agent fulfill <id> -c "token"  # Fulfill with inline credential
-behest-agent enroll <url> <key>  # Enroll with a broker
-behest-agent --version           # Show version
+behest-agent rotate-key               # Rotate signing key (re-enroll)
+behest-agent --version                # Show version
 ```
+
+In tray mode, pending requests appear as clickable menu items. Clicking one
+opens Terminal with `behest-agent fulfill <id>` ready for input.
 
 ## License
 
