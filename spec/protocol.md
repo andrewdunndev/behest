@@ -79,7 +79,8 @@ Poll for request status.
   "expires_at": "string (ISO 8601)",
   "credential": {
     "nonce": "string (base64url, 24 bytes)",
-    "ciphertext": "string (base64url)"
+    "ciphertext": "string (base64url)",
+    "agent_public_key": "string (base64url, 32 bytes raw X25519)"
   }
 }
 ```

@@ -7,6 +7,7 @@ package behest
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -38,13 +39,13 @@ func NewClient(brokerURL string) *Client {
 type Request struct {
 	ID         string
 	ExpiresAt  time.Time
-	PublicKey  *[32]byte // requester's ephemeral public key
-	PrivateKey *[32]byte // requester's ephemeral private key
+	publicKey  *[32]byte // requester's ephemeral public key
+	privateKey *[32]byte // requester's ephemeral private key
 	client     *Client
 }
 
 // CreateRequest posts a new credential request to the broker.
-func (c *Client) CreateRequest(service, message, hint string) (*Request, error) {
+func (c *Client) CreateRequest(ctx context.Context, service, message, hint string) (*Request, error) {
 	pub, priv, err := box.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("generating keypair: %w", err)
@@ -60,11 +61,14 @@ func (c *Client) CreateRequest(service, message, hint string) (*Request, error) 
 		return nil, fmt.Errorf("marshaling request: %w", err)
 	}
 
-	resp, err := c.HTTPClient.Post(
-		c.BrokerURL+"/v1/requests",
-		"application/json",
-		bytes.NewReader(body),
-	)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.BrokerURL+"/v1/requests", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("posting request: %w", err)
 	}
@@ -90,8 +94,8 @@ func (c *Client) CreateRequest(service, message, hint string) (*Request, error) 
 	return &Request{
 		ID:         result.ID,
 		ExpiresAt:  expiresAt,
-		PublicKey:  pub,
-		PrivateKey: priv,
+		publicKey:  pub,
+		privateKey: priv,
 		client:     c,
 	}, nil
 }
@@ -104,10 +108,14 @@ type PollResult struct {
 // Poll checks the broker for a fulfilled credential. Returns nil, nil if
 // still pending. Returns a PollResult when fulfilled. Returns an error on
 // expiry, network failure, or decryption failure.
-func (r *Request) Poll() (*PollResult, error) {
-	resp, err := r.client.HTTPClient.Get(
-		r.client.BrokerURL + "/v1/requests/" + r.ID,
-	)
+func (r *Request) Poll(ctx context.Context) (*PollResult, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		r.client.BrokerURL+"/v1/requests/"+r.ID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating poll request: %w", err)
+	}
+
+	resp, err := r.client.HTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("polling: %w", err)
 	}
@@ -139,16 +147,24 @@ func (r *Request) Poll() (*PollResult, error) {
 		return nil, nil // still pending
 	}
 
-	// Decode the encrypted credential
-	nonce, err := base64.RawURLEncoding.DecodeString(result.Credential.Nonce)
+	plaintext, err := r.decrypt(result.Credential.Nonce, result.Credential.Ciphertext, result.Credential.AgentPublicKey)
+	if err != nil {
+		return nil, err
+	}
+
+	return &PollResult{Credential: plaintext}, nil
+}
+
+func (r *Request) decrypt(nonceB64, ciphertextB64, agentPubB64 string) ([]byte, error) {
+	nonce, err := base64.RawURLEncoding.DecodeString(nonceB64)
 	if err != nil {
 		return nil, fmt.Errorf("decoding nonce: %w", err)
 	}
-	ciphertext, err := base64.RawURLEncoding.DecodeString(result.Credential.Ciphertext)
+	ciphertext, err := base64.RawURLEncoding.DecodeString(ciphertextB64)
 	if err != nil {
 		return nil, fmt.Errorf("decoding ciphertext: %w", err)
 	}
-	agentPub, err := base64.RawURLEncoding.DecodeString(result.Credential.AgentPublicKey)
+	agentPub, err := base64.RawURLEncoding.DecodeString(agentPubB64)
 	if err != nil {
 		return nil, fmt.Errorf("decoding agent public key: %w", err)
 	}
@@ -165,38 +181,49 @@ func (r *Request) Poll() (*PollResult, error) {
 	var agentPubArr [32]byte
 	copy(agentPubArr[:], agentPub)
 
-	plaintext, ok := box.Open(nil, ciphertext, &nonceArr, &agentPubArr, r.PrivateKey)
+	plaintext, ok := box.Open(nil, ciphertext, &nonceArr, &agentPubArr, r.privateKey)
 	if !ok {
 		return nil, fmt.Errorf("decryption failed")
 	}
 
-	return &PollResult{Credential: plaintext}, nil
+	// Zero the private key after successful decryption
+	for i := range r.privateKey {
+		r.privateKey[i] = 0
+	}
+
+	return plaintext, nil
 }
 
-// Wait polls until the request is fulfilled or expires.
-func (r *Request) Wait(interval time.Duration) ([]byte, error) {
+// Wait polls until the request is fulfilled, the context is canceled, or the
+// request expires. Returns the decrypted credential on success.
+func (r *Request) Wait(ctx context.Context, interval time.Duration) ([]byte, error) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
 	for {
-		result, err := r.Poll()
+		result, err := r.Poll(ctx)
 		if err != nil {
 			return nil, err
 		}
 		if result != nil {
 			return result.Credential, nil
 		}
-		if time.Now().After(r.ExpiresAt) {
-			return nil, fmt.Errorf("request expired")
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+			if time.Now().After(r.ExpiresAt) {
+				return nil, fmt.Errorf("request expired")
+			}
 		}
-		time.Sleep(interval)
 	}
 }
 
 // Cancel deletes a pending request from the broker.
-func (r *Request) Cancel() error {
-	req, err := http.NewRequest(
-		http.MethodDelete,
-		r.client.BrokerURL+"/v1/requests/"+r.ID,
-		nil,
-	)
+func (r *Request) Cancel(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete,
+		r.client.BrokerURL+"/v1/requests/"+r.ID, nil)
 	if err != nil {
 		return fmt.Errorf("creating cancel request: %w", err)
 	}

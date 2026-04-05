@@ -1,6 +1,7 @@
 package behest
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -173,7 +174,8 @@ func TestFullRoundTrip(t *testing.T) {
 	client := NewClient(server.URL)
 
 	// 1. SDK creates a request (generates keypair, posts to broker)
-	req, err := client.CreateRequest("test-service", "Need a token", "Go to example.com and copy the API key")
+	ctx := context.Background()
+	req, err := client.CreateRequest(ctx, "test-service", "Need a token", "Go to example.com and copy the API key")
 	if err != nil {
 		t.Fatalf("CreateRequest failed: %v", err)
 	}
@@ -181,7 +183,7 @@ func TestFullRoundTrip(t *testing.T) {
 	t.Logf("Request created: id=%s", req.ID)
 
 	// 2. Verify the request is pending
-	result, err := req.Poll()
+	result, err := req.Poll(ctx)
 	if err != nil {
 		t.Fatalf("Poll failed: %v", err)
 	}
@@ -229,7 +231,7 @@ func TestFullRoundTrip(t *testing.T) {
 	broker.mu.Unlock()
 
 	// 6. SDK polls and gets the fulfilled credential, decrypts it
-	result, err = req.Poll()
+	result, err = req.Poll(ctx)
 	if err != nil {
 		t.Fatalf("Poll after fulfillment failed: %v", err)
 	}
@@ -260,7 +262,8 @@ func TestBrokerNeverSeesPlaintext(t *testing.T) {
 
 	client := NewClient(server.URL)
 
-	req, err := client.CreateRequest("test-service", "Need a secret", "")
+	ctx := context.Background()
+	req, err := client.CreateRequest(ctx, "test-service", "Need a secret", "")
 	if err != nil {
 		t.Fatalf("CreateRequest failed: %v", err)
 	}
@@ -310,7 +313,7 @@ func TestBrokerNeverSeesPlaintext(t *testing.T) {
 	}
 	broker.mu.Unlock()
 
-	result, err := req.Poll()
+	result, err := req.Poll(ctx)
 	if err != nil {
 		t.Fatalf("Poll failed: %v", err)
 	}

@@ -26,6 +26,8 @@ muda = "0.15"
 
 # Desktop notifications
 notify-rust = "4"
+tao = { version = "0.33", features = ["rwh_06"] }
+image = "0.25"
 
 # macOS Keychain
 [target.'cfg(target_os = "macos")'.dependencies]

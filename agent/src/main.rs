@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use std::process::Command;
 use std::time::Duration;
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -9,7 +8,6 @@ use crypto_box::aead::{Aead, OsRng};
 use crypto_box::{PublicKey, SalsaBox, SecretKey};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 mod config;
@@ -62,8 +60,7 @@ pub enum AgentEvent {
     Quit,
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -76,48 +73,79 @@ async fn main() -> anyhow::Result<()> {
 
     info!(broker = %config.broker_url, "starting behest agent");
 
-    let (event_tx, event_rx) = mpsc::channel::<AgentEvent>(32);
-
-    let poll_config = config.clone();
-    let poll_tx = event_tx.clone();
-
-    // Spawn the broker polling loop
-    tokio::spawn(async move {
-        poll_loop(poll_config, poll_tx).await;
-    });
-
     if cli.headless {
-        headless_loop(config, event_rx).await?;
+        // Headless mode: tokio owns the main thread, no GUI
+        let rt = tokio::runtime::Runtime::new()?;
+        rt.block_on(run_headless(config))?;
     } else {
-        // System tray runs on the main thread (macOS requirement)
-        // Async work happens on the tokio runtime in background threads
-        tray::run(config, event_tx, event_rx).await?;
+        // GUI mode: main thread runs tao event loop (macOS AppKit requirement)
+        // tokio runtime runs on background threads
+        tray::run(config)?;
     }
 
     Ok(())
 }
 
-async fn poll_loop(config: AgentConfig, tx: mpsc::Sender<AgentEvent>) {
+async fn run_headless(config: AgentConfig) -> anyhow::Result<()> {
     let client = reqwest::Client::new();
     let interval = Duration::from_secs(config.poll_interval_secs);
-    let mut known_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut known_ids = std::collections::HashSet::<String>::new();
 
     loop {
         match fetch_pending(&client, &config.broker_url).await {
             Ok(requests) => {
+                // Prune known_ids: remove IDs no longer in the pending list
+                let active_ids: std::collections::HashSet<&str> =
+                    requests.iter().map(|r| r.id.as_str()).collect();
+                known_ids.retain(|id| active_ids.contains(id.as_str()));
+
                 let new = requests
                     .into_iter()
                     .filter(|r: &PendingRequest| !known_ids.contains(&r.id))
                     .collect::<Vec<PendingRequest>>();
 
-                for r in &new {
-                    known_ids.insert(r.id.clone());
+                for req in &new {
+                    known_ids.insert(req.id.clone());
                 }
 
-                if !new.is_empty() {
-                    if tx.send(AgentEvent::NewRequests(new)).await.is_err() {
-                        return;
+                for req in new {
+                    println!(
+                        "\n--- Credential request: {} ---\nService: {}\nMessage: {}\nHint: {}\nExpires: {}\n",
+                        req.id, req.service, req.message, req.hint, req.expires_at
+                    );
+
+                    // Try hook first
+                    if let Some(credential) = try_hook(&config, &req).await {
+                        fulfill_request(
+                            &client,
+                            &config.broker_url,
+                            &req.id,
+                            credential.as_bytes(),
+                            &req.public_key,
+                        )
+                        .await?;
+                        continue;
                     }
+
+                    // Interactive fallback
+                    println!("Enter credential (or 'skip' to skip):");
+                    let mut input = String::new();
+                    std::io::stdin().read_line(&mut input)?;
+                    let input = input.trim();
+
+                    if input == "skip" {
+                        println!("Skipped.");
+                        continue;
+                    }
+
+                    fulfill_request(
+                        &client,
+                        &config.broker_url,
+                        &req.id,
+                        input.as_bytes(),
+                        &req.public_key,
+                    )
+                    .await?;
                 }
             }
             Err(e) => {
@@ -157,7 +185,7 @@ pub fn encrypt_credential(
 ) -> anyhow::Result<(String, String, String)> {
     let requester_pub_bytes = URL_SAFE_NO_PAD.decode(requester_public_key_b64)?;
     if requester_pub_bytes.len() != 32 {
-        anyhow::bail!("invalid public key length");
+        anyhow::bail!("invalid public key length: expected 32, got {}", requester_pub_bytes.len());
     }
 
     let requester_pub = PublicKey::from_slice(&requester_pub_bytes)
@@ -219,14 +247,16 @@ pub async fn try_hook(config: &AgentConfig, request: &PendingRequest) -> Option<
 
     info!(hook, request_id = %request.id, "running on_request_hook");
 
-    let output = Command::new("sh")
+    // Use tokio::process::Command for non-blocking subprocess execution
+    let output = tokio::process::Command::new("sh")
         .arg("-c")
         .arg(hook)
         .env("BEHEST_REQUEST_JSON", &request_json)
-        .stdin(std::process::Stdio::piped())
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .output();
+        .output()
+        .await;
 
     match output {
         Ok(out) if out.status.success() => {
@@ -248,73 +278,4 @@ pub async fn try_hook(config: &AgentConfig, request: &PendingRequest) -> Option<
             None
         }
     }
-}
-
-async fn headless_loop(
-    config: AgentConfig,
-    mut event_rx: mpsc::Receiver<AgentEvent>,
-) -> anyhow::Result<()> {
-    let client = reqwest::Client::new();
-
-    while let Some(event) = event_rx.recv().await {
-        match event {
-            AgentEvent::NewRequests(requests) => {
-                for req in requests {
-                    println!(
-                        "\n--- Credential request: {} ---\nService: {}\nMessage: {}\nHint: {}\nExpires: {}\n",
-                        req.id, req.service, req.message, req.hint, req.expires_at
-                    );
-
-                    // Try hook first
-                    if let Some(credential) = try_hook(&config, &req).await {
-                        fulfill_request(
-                            &client,
-                            &config.broker_url,
-                            &req.id,
-                            credential.as_bytes(),
-                            &req.public_key,
-                        )
-                        .await?;
-                        continue;
-                    }
-
-                    // Interactive fallback
-                    println!("Enter credential (or 'skip' to skip):");
-                    let mut input = String::new();
-                    std::io::stdin().read_line(&mut input)?;
-                    let input = input.trim();
-
-                    if input == "skip" {
-                        println!("Skipped.");
-                        continue;
-                    }
-
-                    fulfill_request(
-                        &client,
-                        &config.broker_url,
-                        &req.id,
-                        input.as_bytes(),
-                        &req.public_key,
-                    )
-                    .await?;
-                }
-            }
-            AgentEvent::FulfillRequest { id, credential } => {
-                let pending: Vec<PendingRequest> = fetch_pending(&client, &config.broker_url).await?;
-                if let Some(req) = pending.iter().find(|r| r.id == id) {
-                    fulfill_request(
-                        &client,
-                        &config.broker_url,
-                        &id,
-                        credential.as_bytes(),
-                        &req.public_key,
-                    )
-                    .await?;
-                }
-            }
-            AgentEvent::Quit => break,
-        }
-    }
-
-    Ok(())
 }

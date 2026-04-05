@@ -128,7 +128,7 @@ async function fireNotifiers(env: Env, request: StoredRequest): Promise<void> {
 
 // --- Route: POST /v1/requests ---
 
-async function createRequest(request: Request, env: Env): Promise<Response> {
+async function createRequest(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   let body: CreateRequest;
   try {
     body = (await request.json()) as CreateRequest;
@@ -153,6 +153,15 @@ async function createRequest(request: Request, env: Env): Promise<Response> {
   }
   if (body.hint && body.hint.length > 4096) {
     return errorResponse("bad_request", "Hint exceeds 4 KiB", 400);
+  }
+  // Validate public key is valid base64url and decodes to 32 bytes
+  try {
+    const keyBytes = Uint8Array.from(atob(body.public_key.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+    if (keyBytes.length !== 32) {
+      return errorResponse("bad_request", "public_key must be 32 bytes (X25519)", 400);
+    }
+  } catch {
+    return errorResponse("bad_request", "public_key is not valid base64url", 400);
   }
 
   const id = crypto.randomUUID();
@@ -180,8 +189,9 @@ async function createRequest(request: Request, env: Env): Promise<Response> {
     expirationTtl: ttlSeconds,
   });
 
-  // Fire notifiers in background
-  fireNotifiers(env, stored);
+  // Fire notifiers in background (ctx.waitUntil ensures they complete
+  // even after the response is returned)
+  ctx.waitUntil(fireNotifiers(env, stored));
 
   return json({ id, expires_at: expiresAt.toISOString(), status: "pending" }, 201);
 }
@@ -280,15 +290,21 @@ async function fulfillRequest(id: string, request: Request, env: Env): Promise<R
 
 async function listPending(env: Env): Promise<Response> {
   const list = await env.REQUESTS.list({ prefix: "pending:" });
-  const requests: Omit<StoredRequest, "credential" | "status">[] = [];
 
-  for (const key of list.keys) {
-    const id = key.name.slice("pending:".length);
-    const raw = await env.REQUESTS.get(`req:${id}`);
-    if (raw === null) continue;
-    const stored: StoredRequest = JSON.parse(raw);
-    if (stored.status !== "pending") continue;
-    requests.push({
+  // Batch fetch all pending request data in parallel
+  const entries = await Promise.all(
+    list.keys.map(async (key) => {
+      const id = key.name.slice("pending:".length);
+      const raw = await env.REQUESTS.get(`req:${id}`);
+      return raw;
+    })
+  );
+
+  const requests = entries
+    .filter((raw): raw is string => raw !== null)
+    .map((raw) => JSON.parse(raw) as StoredRequest)
+    .filter((stored) => stored.status === "pending")
+    .map((stored) => ({
       id: stored.id,
       service: stored.service,
       message: stored.message,
@@ -296,8 +312,7 @@ async function listPending(env: Env): Promise<Response> {
       public_key: stored.public_key,
       created_at: stored.created_at,
       expires_at: stored.expires_at,
-    });
-  }
+    }));
 
   return json({ requests });
 }
@@ -312,14 +327,14 @@ async function deleteRequest(id: string, env: Env): Promise<Response> {
 
 // --- Router ---
 
-async function handleRequest(request: Request, env: Env): Promise<Response> {
+async function handleRequest(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
   const method = request.method;
 
   // POST /v1/requests
   if (path === "/v1/requests" && method === "POST") {
-    return createRequest(request, env);
+    return createRequest(request, env, ctx);
   }
 
   // GET /v1/requests/pending
@@ -355,7 +370,7 @@ export default {
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
-    const response = await handleRequest(request, env);
+    const response = await handleRequest(request, env, ctx);
     return corsify(response);
   },
 } satisfies ExportedHandler<Env>;
