@@ -5,8 +5,8 @@ export interface Env {
   REQUESTS: KVNamespace;
   REQUEST_TTL_SECONDS: string;
   MAX_CREDENTIAL_BYTES: string;
-  NOTIFIERS: string; // JSON array of notifier configs
-  AUTH_TOKEN: string; // Shared bearer token (set via wrangler secret)
+  NOTIFIERS: string;
+  AUTH_TOKEN: string; // Shared bearer token / master key
 }
 
 interface CreateRequest {
@@ -29,6 +29,8 @@ interface StoredRequest {
     nonce: string;
     ciphertext: string;
     agent_public_key: string;
+    signing_key?: string;
+    signature?: string;
   };
 }
 
@@ -36,6 +38,12 @@ interface NotifierConfig {
   type: "ntfy" | "webhook";
   url: string;
   headers?: Record<string, string>;
+}
+
+interface EnrolledAgent {
+  signing_key: string;
+  name: string;
+  enrolled_at: string;
 }
 
 // --- CORS ---
@@ -58,12 +66,14 @@ function corsify(response: Response): Response {
 // --- Auth ---
 
 function authenticate(request: Request, env: Env): Response | null {
-  if (!env.AUTH_TOKEN) {
-    return null; // No token configured = open (development only)
-  }
+  if (!env.AUTH_TOKEN) return null;
   const auth = request.headers.get("Authorization");
   if (!auth || auth !== `Bearer ${env.AUTH_TOKEN}`) {
-    return errorResponse("unauthorized", "Missing or invalid Authorization header", 401);
+    return errorResponse(
+      "unauthorized",
+      "Missing or invalid Authorization header",
+      401,
+    );
   }
   return null;
 }
@@ -77,7 +87,11 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-function errorResponse(error: string, message: string, status: number): Response {
+function errorResponse(
+  error: string,
+  message: string,
+  status: number,
+): Response {
   return json({ error, message }, status);
 }
 
@@ -91,12 +105,38 @@ function maxCredentialBytes(env: Env): number {
 
 function decodeBase64Url(s: string): Uint8Array | null {
   try {
-    // Pad to multiple of 4
     const padded = s + "=".repeat((4 - (s.length % 4)) % 4);
     const binary = atob(padded.replace(/-/g, "+").replace(/_/g, "/"));
     return Uint8Array.from(binary, (c) => c.charCodeAt(0));
   } catch {
     return null;
+  }
+}
+
+// --- Ed25519 signature verification ---
+
+async function verifyEd25519(
+  signingKeyB64: string,
+  signatureB64: string,
+  message: Uint8Array,
+): Promise<boolean> {
+  const keyBytes = decodeBase64Url(signingKeyB64);
+  const sigBytes = decodeBase64Url(signatureB64);
+  if (!keyBytes || keyBytes.length !== 32 || !sigBytes || sigBytes.length !== 64) {
+    return false;
+  }
+
+  try {
+    const key = await crypto.subtle.importKey(
+      "raw",
+      keyBytes,
+      { name: "Ed25519" },
+      false,
+      ["verify"],
+    );
+    return await crypto.subtle.verify("Ed25519", key, sigBytes, message);
+  } catch {
+    return false;
   }
 }
 
@@ -154,6 +194,47 @@ async function fireNotifiers(
   await Promise.allSettled(promises);
 }
 
+// --- Route: POST /v1/agents/enroll ---
+
+async function enrollAgent(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  let body: { signing_key: string; name: string };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return errorResponse("bad_request", "Invalid JSON body", 400);
+  }
+
+  if (!body.signing_key || !body.name) {
+    return errorResponse("bad_request", "Missing signing_key or name", 400);
+  }
+
+  const keyBytes = decodeBase64Url(body.signing_key);
+  if (!keyBytes || keyBytes.length !== 32) {
+    return errorResponse(
+      "bad_request",
+      "signing_key must be 32 bytes Ed25519, base64url-encoded",
+      400,
+    );
+  }
+
+  const agent: EnrolledAgent = {
+    signing_key: body.signing_key,
+    name: body.name,
+    enrolled_at: new Date().toISOString(),
+  };
+
+  // Store agent by signing key
+  await env.REQUESTS.put(
+    `agent:${body.signing_key}`,
+    JSON.stringify(agent),
+  );
+
+  return json({ enrolled: true, name: body.name }, 201);
+}
+
 // --- Route: POST /v1/requests ---
 
 async function createRequest(
@@ -175,10 +256,18 @@ async function createRequest(
     return errorResponse("bad_request", "Missing or invalid 'message'", 400);
   }
   if (!body.public_key || typeof body.public_key !== "string") {
-    return errorResponse("bad_request", "Missing or invalid 'public_key'", 400);
+    return errorResponse(
+      "bad_request",
+      "Missing or invalid 'public_key'",
+      400,
+    );
   }
   if (body.service.length > 128) {
-    return errorResponse("bad_request", "Service name exceeds 128 characters", 400);
+    return errorResponse(
+      "bad_request",
+      "Service name exceeds 128 characters",
+      400,
+    );
   }
   if (body.message.length > 1024) {
     return errorResponse("bad_request", "Message exceeds 1 KiB", 400);
@@ -215,12 +304,10 @@ async function createRequest(
     expirationTtl: ttlSeconds,
   });
 
-  // Index for pending list
   await env.REQUESTS.put(`pending:${id}`, id, {
     expirationTtl: ttlSeconds,
   });
 
-  // Fire notifiers in background
   const brokerUrl = new URL(request.url).origin;
   ctx.waitUntil(fireNotifiers(env, brokerUrl, stored));
 
@@ -245,7 +332,6 @@ async function getRequest(id: string, env: Env): Promise<Response> {
   const stored: StoredRequest = JSON.parse(raw);
 
   if (stored.status === "fulfilled" && stored.credential) {
-    // Single-use: delete the request, mark as consumed
     await env.REQUESTS.delete(`req:${id}`);
     await env.REQUESTS.delete(`pending:${id}`);
     await env.REQUESTS.put(`consumed:${id}`, "1", {
@@ -288,7 +374,13 @@ async function fulfillRequest(
     return errorResponse("conflict", "Request already fulfilled", 409);
   }
 
-  let body: { nonce: string; ciphertext: string; agent_public_key: string };
+  let body: {
+    nonce: string;
+    ciphertext: string;
+    agent_public_key: string;
+    signature?: string;
+    signing_key?: string;
+  };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -303,7 +395,7 @@ async function fulfillRequest(
     );
   }
 
-  // Check credential size (base64url is ~4/3 of raw)
+  // Check credential size
   const estimatedSize = Math.ceil((body.ciphertext.length * 3) / 4);
   if (estimatedSize > maxCredentialBytes(env)) {
     return errorResponse(
@@ -313,14 +405,56 @@ async function fulfillRequest(
     );
   }
 
+  // Verify agent signature if enrolled agents exist
+  if (body.signature && body.signing_key) {
+    // Verify the signing key is enrolled
+    const agentRaw = await env.REQUESTS.get(`agent:${body.signing_key}`);
+    if (agentRaw === null) {
+      return errorResponse(
+        "forbidden",
+        "Signing key is not enrolled. Run `behest-agent enroll` first.",
+        403,
+      );
+    }
+
+    // Verify the signature: sign(request_id || nonce || ciphertext)
+    const encoder = new TextEncoder();
+    const payload = new Uint8Array([
+      ...encoder.encode(id),
+      ...encoder.encode(body.nonce),
+      ...encoder.encode(body.ciphertext),
+    ]);
+
+    const valid = await verifyEd25519(
+      body.signing_key,
+      body.signature,
+      payload,
+    );
+    if (!valid) {
+      return errorResponse("forbidden", "Invalid signature", 403);
+    }
+  } else {
+    // No signature: check if any agents are enrolled (enforcement)
+    const agentList = await env.REQUESTS.list({ prefix: "agent:", limit: 1 });
+    if (agentList.keys.length > 0) {
+      return errorResponse(
+        "forbidden",
+        "Agents are enrolled; fulfillment requires a valid signature",
+        403,
+      );
+    }
+    // No agents enrolled = allow unsigned (backward compat / bootstrap)
+  }
+
   stored.status = "fulfilled";
   stored.credential = {
     nonce: body.nonce,
     ciphertext: body.ciphertext,
     agent_public_key: body.agent_public_key,
+    signing_key: body.signing_key,
+    signature: body.signature,
   };
 
-  // Calculate remaining TTL
   const remaining = Math.max(
     60,
     Math.floor(
@@ -340,7 +474,6 @@ async function fulfillRequest(
 async function listPending(env: Env): Promise<Response> {
   const list = await env.REQUESTS.list({ prefix: "pending:" });
 
-  // Batch fetch all pending request data in parallel
   const entries = await Promise.all(
     list.keys.map(async (key) => {
       const id = key.name.slice("pending:".length);
@@ -384,13 +517,17 @@ async function handleRequest(
   env: Env,
   ctx: ExecutionContext,
 ): Promise<Response> {
-  // Authenticate all requests
   const authError = authenticate(request, env);
   if (authError) return authError;
 
   const url = new URL(request.url);
   const path = url.pathname;
   const method = request.method;
+
+  // POST /v1/agents/enroll
+  if (path === "/v1/agents/enroll" && method === "POST") {
+    return enrollAgent(request, env);
+  }
 
   // POST /v1/requests
   if (path === "/v1/requests" && method === "POST") {

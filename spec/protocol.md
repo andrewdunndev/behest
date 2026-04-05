@@ -109,7 +109,9 @@ Submit a credential for a pending request.
 {
   "nonce": "string (base64url, 24 bytes)",
   "ciphertext": "string (base64url)",
-  "agent_public_key": "string (base64url, 32 bytes raw X25519)"
+  "agent_public_key": "string (base64url, 32 bytes raw X25519)",
+  "signing_key": "string (base64url, 32 bytes Ed25519 public key)",
+  "signature": "string (base64url, 64 bytes Ed25519 signature)"
 }
 ```
 
@@ -118,8 +120,15 @@ Submit a credential for a pending request.
 | `nonce` | yes | Random 24-byte nonce used for NaCl box encryption |
 | `ciphertext` | yes | NaCl box ciphertext (XSalsa20-Poly1305) |
 | `agent_public_key` | yes | Agent's ephemeral X25519 public key for this fulfillment |
+| `signing_key` | yes* | Agent's enrolled Ed25519 public key |
+| `signature` | yes* | Ed25519 signature over `request_id \|\| nonce \|\| ciphertext` |
+
+\* Required when agents are enrolled. If no agents are enrolled, unsigned
+fulfillment is accepted (bootstrap/development mode).
 
 **Response: 204 No Content**
+
+**Response: 403 Forbidden** — signing key not enrolled or invalid signature.
 
 **Response: 404 Not Found** — request expired or doesn't exist.
 
@@ -156,6 +165,34 @@ List pending requests (for agent polling).
 - Returns all requests with status `pending`.
 - Agent uses this to discover new requests when SSE is unavailable.
 - The `public_key` is included so the agent can encrypt the credential.
+
+### POST /agents/enroll
+
+Register an agent's Ed25519 signing key with the broker.
+
+**Request body:**
+
+```json
+{
+  "signing_key": "string (base64url, 32 bytes Ed25519 public key)",
+  "name": "string (human-readable agent name, e.g. hostname)"
+}
+```
+
+**Response: 201 Created**
+
+```json
+{
+  "enrolled": true,
+  "name": "string"
+}
+```
+
+**Behavior:**
+- Stores the agent's signing key in KV (permanent, no TTL).
+- Once any agent is enrolled, all fulfillments must include a valid
+  Ed25519 signature from an enrolled agent.
+- Enrollment requires bearer token authentication (the master key).
 
 ### DELETE /requests/{id}
 

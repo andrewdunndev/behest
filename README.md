@@ -13,21 +13,34 @@ sees plaintext.
   generates keypair              broker                   system tray daemon
   POST /v1/requests  ───────>  stores request  ────────>  notification
   polls GET /{id}               KV + TTL                  human fulfills
-  decrypts locally   <───────  relays ciphertext <──────  encrypts with
-                                                          requester's pubkey
+  decrypts locally   <───────  relays ciphertext <──────  encrypts + signs
+                                                          with enrolled key
 ```
 
 Both sides are outbound-only. No inbound connections. No NAT traversal.
-All endpoints require bearer token authentication.
 
 ## Components
 
 | Directory | Language | Purpose |
 |-----------|----------|---------|
 | `worker/` | TypeScript | Cloudflare Worker broker |
-| `agent/` | Rust | Laptop daemon (system tray, notifications, encryption) |
+| `agent/` | Rust | Laptop daemon (system tray, notifications, signing, encryption) |
 | `sdk/` | Go | Client library for requesting services |
 | `spec/` | Markdown | Wire protocol specification |
+
+## Security Model
+
+Three layers of protection:
+
+| Layer | Purpose | Mechanism |
+|-------|---------|-----------|
+| **Bearer token** | API access control | Shared master key on all endpoints |
+| **Agent identity** | Fulfillment authorization | Ed25519 signing (key in macOS Keychain) |
+| **E2E encryption** | Credential confidentiality | X25519 + NaCl box (per-request ephemeral) |
+
+A stolen bearer token lets an attacker create/poll requests but not fulfill
+them (no Ed25519 private key). A compromised broker sees only ciphertext
+(no plaintext credentials). Both requester and agent are outbound-only.
 
 ## Deploy
 
@@ -36,57 +49,60 @@ All endpoints require bearer token authentication.
 ```bash
 cd worker && npm install
 
-# Create KV namespace and note the ID
+# Create KV namespace
 npx wrangler kv namespace create REQUESTS
 npx wrangler kv namespace create REQUESTS --preview
-
 # Edit wrangler.toml: paste the namespace IDs
 
-# Set the shared auth token
+# Set the master key (used for auth + enrollment)
 npx wrangler secret put AUTH_TOKEN
-
-# Optionally configure notifiers in wrangler.toml [vars] NOTIFIERS
 
 # Deploy
 npx wrangler deploy
 ```
 
-### 2. Agent (laptop daemon)
+### 2. Enroll an agent (once per machine)
 
 ```bash
 cd agent && cargo build --release
 
-# Create config
-mkdir -p ~/.config/behest
-cp agent.example.toml ~/.config/behest/agent.toml
-# Edit: set broker_url and auth_token
+# One command, two args: broker URL + master key
+./target/release/behest-agent enroll https://behest.you.workers.dev sk_your_master_key
 
-# Run
+# That's it. Config is written, signing key is in Keychain.
+# Start the agent:
 ./target/release/behest-agent
-# Or headless: ./target/release/behest-agent --headless
 ```
 
-### 3. SDK (in your Go service)
+### 3. Auto-start (macOS)
+
+```bash
+make install-service
+```
+
+### 4. Use from a Go service
 
 ```go
 import "gitlab.com/dunn.dev/behest/behest/sdk"
 
-client := behest.NewClient("https://behest.your-account.workers.dev")
-client.AuthToken = "your-shared-secret"
+client := behest.NewClient("https://behest.you.workers.dev")
+client.AuthToken = os.Getenv("BEHEST_KEY")
 
 req, err := client.CreateRequest(ctx, "my-app", "Need API token", "Go to Settings > API Keys")
 credential, err := req.Wait(ctx, behest.DefaultPollInterval)
 ```
 
-## Security
+## Agent Commands
 
-- E2E encryption: X25519 + NaCl box (XSalsa20-Poly1305)
-- Broker stores only ciphertext; never holds plaintext credentials
-- Bearer token authentication on all endpoints
-- Request IDs are UUIDv4, short TTL, single-use
-- Both requester and agent are outbound-only
-
-See [spec/protocol.md](spec/protocol.md) for the full wire protocol.
+```
+behest-agent                     # Run as system tray daemon (default)
+behest-agent run --headless      # Run without GUI (terminal/SSH)
+behest-agent list                # Show pending requests
+behest-agent fulfill <id>        # Fulfill a request interactively
+behest-agent fulfill <id> -c "token"  # Fulfill with inline credential
+behest-agent enroll <url> <key>  # Enroll with a broker
+behest-agent --version           # Show version
+```
 
 ## License
 

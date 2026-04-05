@@ -16,9 +16,11 @@ reqwest = { version = "0.12", features = ["json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# Crypto: NaCl box (X25519 + XSalsa20-Poly1305)
-crypto_box = "0.9"
+# Crypto
+crypto_box = "0.9"       # NaCl box (X25519 + XSalsa20-Poly1305)
+ed25519-dalek = { version = "2", features = ["rand_core"] }  # Agent identity signing
 rand = "0.8"
+base64 = "0.22"
 
 # System tray + event loop
 tray-icon = "0.19"
@@ -26,18 +28,28 @@ tao = { version = "0.33", features = ["rwh_06"] }
 
 # Desktop notifications
 notify-rust = "4"
+hostname = "0.4"
 
-# Error handling
-anyhow = "1"
+# macOS Keychain
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
 
-# CLI / config
-clap = { version = "4", features = ["derive"] }
-dirs = "6"
-toml = "0.8"
+[dependencies.anyhow]
+version = "1"
 
-# Logging
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+[dependencies.clap]
+version = "4"
+features = ["derive"]
 
-# Base64
-base64 = "0.22"
+[dependencies.dirs]
+version = "6"
+
+[dependencies.toml]
+version = "0.8"
+
+[dependencies.tracing]
+version = "0.1"
+
+[dependencies.tracing-subscriber]
+version = "0.3"
+features = ["env-filter"]

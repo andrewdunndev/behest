@@ -7,6 +7,7 @@ use tracing::{info, warn};
 
 pub mod broker;
 mod config;
+pub mod identity;
 mod notifier;
 mod tray;
 
@@ -27,6 +28,16 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Enroll this machine with a behest broker
+    Enroll {
+        /// Broker URL
+        broker_url: String,
+        /// Master key (the MASTER_KEY secret from the Worker)
+        master_key: String,
+        /// Agent name (defaults to hostname)
+        #[arg(short, long)]
+        name: Option<String>,
+    },
     /// Run the agent daemon (default if no subcommand given)
     Run {
         /// Run in headless mode (no system tray, TUI only)
@@ -78,9 +89,22 @@ fn main() -> anyhow::Result<()> {
         .init();
 
     let cli = Cli::parse();
+
+    // Enroll doesn't need an existing config
+    if let Some(Command::Enroll {
+        broker_url,
+        master_key,
+        name,
+    }) = cli.command
+    {
+        let rt = tokio::runtime::Runtime::new()?;
+        return rt.block_on(cmd_enroll(cli.config, broker_url, master_key, name));
+    }
+
     let config = config::load(cli.config, cli.broker)?;
 
     match cli.command {
+        Some(Command::Enroll { .. }) => unreachable!(),
         Some(Command::List) => {
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(cmd_list(config))
@@ -104,6 +128,55 @@ fn main() -> anyhow::Result<()> {
             tray::run(config)
         }
     }
+}
+
+// --- Subcommand: enroll ---
+
+async fn cmd_enroll(
+    config_path: Option<PathBuf>,
+    broker_url: String,
+    master_key: String,
+    name: Option<String>,
+) -> anyhow::Result<()> {
+    let agent_name = name.unwrap_or_else(|| {
+        hostname::get()
+            .ok()
+            .and_then(|h| h.into_string().ok())
+            .unwrap_or_else(|| "behest-agent".to_string())
+    });
+
+    // Generate identity
+    let identity = identity::AgentIdentity::generate();
+    println!("Generated signing key: {}", identity.public_key_b64());
+
+    // Enroll with broker
+    let broker_url = broker_url.trim_end_matches('/').to_string();
+    let client = broker::BrokerClient::for_enrollment(&broker_url, &master_key);
+    client.enroll(&identity, &agent_name).await?;
+
+    // Save identity to Keychain / file
+    identity.save()?;
+
+    // Write config
+    let config_file = config_path.unwrap_or_else(config::default_config_path);
+    if let Some(parent) = config_file.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let config = AgentConfig {
+        broker_url: broker_url.clone(),
+        auth_token: Some(master_key),
+        poll_interval_secs: 2,
+        on_request_hook: None,
+    };
+    let toml_str = toml::to_string_pretty(&config)?;
+    std::fs::write(&config_file, toml_str)?;
+
+    println!("Enrolled as \"{}\"", agent_name);
+    println!("Config written to {}", config_file.display());
+    println!("Run `behest-agent` to start.");
+
+    Ok(())
 }
 
 // --- Subcommand: list ---

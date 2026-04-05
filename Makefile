@@ -1,6 +1,7 @@
 .PHONY: all worker agent sdk clean test \
 	worker-dev worker-deploy worker-test worker-typecheck \
-	agent-dev agent-test sdk-test
+	agent-dev agent-test sdk-test \
+	install-service uninstall-service
 
 all: worker agent sdk
 
@@ -51,3 +52,19 @@ clean:
 setup:
 	cd worker && npm install
 	cd agent && cargo fetch
+
+# --- macOS Service ---
+
+AGENT_BIN = $(shell pwd)/agent/target/release/behest-agent
+PLIST_SRC = agent/dev.behest.agent.plist
+PLIST_DST = $(HOME)/Library/LaunchAgents/dev.behest.agent.plist
+
+install-service: agent
+	@sed 's|AGENT_PATH|$(AGENT_BIN)|g' $(PLIST_SRC) > $(PLIST_DST)
+	launchctl load $(PLIST_DST)
+	@echo "Service installed. behest-agent will start at login."
+
+uninstall-service:
+	-launchctl unload $(PLIST_DST)
+	rm -f $(PLIST_DST)
+	@echo "Service removed."

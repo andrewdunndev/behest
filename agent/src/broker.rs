@@ -6,6 +6,7 @@ use rand::RngCore;
 use serde::Deserialize;
 use tracing::info;
 
+use crate::identity::AgentIdentity;
 use crate::{AgentConfig, PendingRequest};
 
 /// Authenticated HTTP client for the behest broker.
@@ -13,14 +14,34 @@ pub struct BrokerClient {
     client: reqwest::Client,
     pub broker_url: String,
     auth_token: Option<String>,
+    identity: Option<AgentIdentity>,
 }
 
 impl BrokerClient {
     pub fn new(config: &AgentConfig) -> Self {
+        let identity = match AgentIdentity::load() {
+            Ok(id) => Some(id),
+            Err(e) => {
+                tracing::warn!(error = %e, "no agent identity loaded; fulfillment signing disabled");
+                None
+            }
+        };
+
         Self {
             client: reqwest::Client::new(),
             broker_url: config.broker_url.clone(),
             auth_token: config.auth_token.clone(),
+            identity,
+        }
+    }
+
+    /// Create a client for enrollment (no identity loaded yet).
+    pub fn for_enrollment(broker_url: &str, master_key: &str) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            broker_url: broker_url.trim_end_matches('/').to_string(),
+            auth_token: Some(master_key.to_string()),
+            identity: None,
         }
     }
 
@@ -30,14 +51,18 @@ impl BrokerClient {
             .map(|t| format!("Bearer {}", t))
     }
 
+    fn authed(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match self.auth_header() {
+            Some(auth) => req.header("Authorization", auth),
+            None => req,
+        }
+    }
+
     pub async fn fetch_pending(&self) -> anyhow::Result<Vec<PendingRequest>> {
-        let mut req = self
+        let req = self
             .client
             .get(format!("{}/v1/requests/pending", self.broker_url));
-        if let Some(auth) = self.auth_header() {
-            req = req.header("Authorization", auth);
-        }
-        let resp = req.send().await?;
+        let resp = self.authed(req).send().await?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -60,24 +85,30 @@ impl BrokerClient {
         credential: &[u8],
         requester_public_key: &str,
     ) -> anyhow::Result<()> {
-        let (nonce, ciphertext, agent_pub) =
+        let (nonce, ciphertext, agent_enc_pub) =
             encrypt_credential(credential, requester_public_key)?;
 
-        let mut req = self
+        let mut body = serde_json::json!({
+            "nonce": nonce,
+            "ciphertext": ciphertext,
+            "agent_public_key": agent_enc_pub,
+        });
+
+        // Sign the fulfillment if we have an identity
+        if let Some(identity) = &self.identity {
+            let signature = identity.sign_fulfillment(request_id, &nonce, &ciphertext);
+            body["signature"] = serde_json::Value::String(signature);
+            body["signing_key"] = serde_json::Value::String(identity.public_key_b64());
+        }
+
+        let req = self
             .client
             .post(format!(
                 "{}/v1/requests/{}/fulfill",
                 self.broker_url, request_id
             ))
-            .json(&serde_json::json!({
-                "nonce": nonce,
-                "ciphertext": ciphertext,
-                "agent_public_key": agent_pub,
-            }));
-        if let Some(auth) = self.auth_header() {
-            req = req.header("Authorization", auth);
-        }
-        let resp = req.send().await?;
+            .json(&body);
+        let resp = self.authed(req).send().await?;
 
         if resp.status().as_u16() != 204 {
             let body = resp.text().await.unwrap_or_default();
@@ -85,6 +116,31 @@ impl BrokerClient {
         }
 
         info!(request_id, "request fulfilled");
+        Ok(())
+    }
+
+    /// Enroll this agent with the broker.
+    pub async fn enroll(
+        &self,
+        identity: &AgentIdentity,
+        name: &str,
+    ) -> anyhow::Result<()> {
+        let req = self
+            .client
+            .post(format!("{}/v1/agents/enroll", self.broker_url))
+            .json(&serde_json::json!({
+                "signing_key": identity.public_key_b64(),
+                "name": name,
+            }));
+        let resp = self.authed(req).send().await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("enrollment failed ({}): {}", status, body);
+        }
+
+        info!(name, "agent enrolled");
         Ok(())
     }
 }
