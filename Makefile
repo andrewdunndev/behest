@@ -44,6 +44,15 @@ sdk-test:
 
 test: worker-test agent-test sdk-test
 
+# --- Smoke test (requires deployed broker) ---
+# BEHEST_URL=https://... BEHEST_KEY=... make smoke-test
+smoke-test:
+	cd sdk && go run ./cmd/behest-smoke --self-test
+
+# Interactive smoke test (waits for you to fulfill from the agent)
+smoke-test-interactive:
+	cd sdk && go run ./cmd/behest-smoke
+
 clean:
 	rm -rf worker/dist worker/node_modules agent/target
 
