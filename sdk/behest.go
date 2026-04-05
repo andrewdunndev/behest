@@ -14,24 +14,35 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/nacl/box"
 )
 
+// DefaultPollInterval is the recommended polling interval.
+const DefaultPollInterval = 2 * time.Second
+
 // Client talks to a behest broker.
 type Client struct {
 	BrokerURL  string
+	AuthToken  string // Bearer token for broker authentication
 	HTTPClient *http.Client
 }
 
 // NewClient creates a Client for the given broker URL.
 func NewClient(brokerURL string) *Client {
 	return &Client{
-		BrokerURL: brokerURL,
+		BrokerURL: strings.TrimRight(brokerURL, "/"),
 		HTTPClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+	}
+}
+
+func (c *Client) setAuth(req *http.Request) {
+	if c.AuthToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.AuthToken)
 	}
 }
 
@@ -61,14 +72,15 @@ func (c *Client) CreateRequest(ctx context.Context, service, message, hint strin
 		return nil, fmt.Errorf("marshaling request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.BrokerURL+"/v1/requests", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Content-Type", "application/json")
+	c.setAuth(httpReq)
 
-	resp, err := c.HTTPClient.Do(req)
+	resp, err := c.HTTPClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("posting request: %w", err)
 	}
@@ -114,6 +126,7 @@ func (r *Request) Poll(ctx context.Context) (*PollResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("creating poll request: %w", err)
 	}
+	r.client.setAuth(req)
 
 	resp, err := r.client.HTTPClient.Do(req)
 	if err != nil {
@@ -181,14 +194,16 @@ func (r *Request) decrypt(nonceB64, ciphertextB64, agentPubB64 string) ([]byte, 
 	var agentPubArr [32]byte
 	copy(agentPubArr[:], agentPub)
 
+	// Zero the private key regardless of outcome
+	defer func() {
+		for i := range r.privateKey {
+			r.privateKey[i] = 0
+		}
+	}()
+
 	plaintext, ok := box.Open(nil, ciphertext, &nonceArr, &agentPubArr, r.privateKey)
 	if !ok {
-		return nil, fmt.Errorf("decryption failed")
-	}
-
-	// Zero the private key after successful decryption
-	for i := range r.privateKey {
-		r.privateKey[i] = 0
+		return nil, fmt.Errorf("decryption failed: authentication error (mismatched keys or corrupted ciphertext)")
 	}
 
 	return plaintext, nil
@@ -227,6 +242,7 @@ func (r *Request) Cancel(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("creating cancel request: %w", err)
 	}
+	r.client.setAuth(req)
 
 	resp, err := r.client.HTTPClient.Do(req)
 	if err != nil {

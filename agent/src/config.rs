@@ -19,6 +19,7 @@ pub fn load(path: Option<PathBuf>, broker_override: Option<String>) -> anyhow::R
         // No config file; broker_url must come from CLI
         AgentConfig {
             broker_url: String::new(),
+            auth_token: None,
             poll_interval_secs: 2,
             on_request_hook: None,
         }

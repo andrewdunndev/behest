@@ -5,8 +5,15 @@ compatibility_date = "2024-12-01"
 [vars]
 REQUEST_TTL_SECONDS = "600"
 MAX_CREDENTIAL_BYTES = "65536"
+# Notifier config: JSON array. Example: [{"type":"ntfy","url":"https://ntfy.sh/my-behest"}]
+# For secrets in notifier headers, use wrangler secret instead.
+NOTIFIERS = "[]"
+
+# AUTH_TOKEN: set via `wrangler secret put AUTH_TOKEN`
+# All API requests must include `Authorization: Bearer <token>`
+# If unset, the broker runs unauthenticated (development only).
 
 [[kv_namespaces]]
 binding = "REQUESTS"
-id = ""        # Set after `wrangler kv namespace create REQUESTS`
-preview_id = "" # Set after `wrangler kv namespace create REQUESTS --preview`
+id = ""        # Run: npx wrangler kv namespace create REQUESTS
+preview_id = "" # Run: npx wrangler kv namespace create REQUESTS --preview

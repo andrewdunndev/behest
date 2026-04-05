@@ -190,7 +190,7 @@ async fn async_worker(
     loop {
         tokio::select! {
             _ = poll_interval.tick() => {
-                match fetch_pending(&client, &config.broker_url).await {
+                match fetch_pending(&client, &config.broker_url, config.auth_token.as_deref()).await {
                     Ok(requests) => {
                         // Prune known_ids: remove IDs no longer pending
                         let active_ids: std::collections::HashSet<&str> =
@@ -214,6 +214,7 @@ async fn async_worker(
                                     match fulfill_request(
                                         &client,
                                         &config.broker_url,
+                                        config.auth_token.as_deref(),
                                         &req.id,
                                         credential.as_bytes(),
                                         &req.public_key,

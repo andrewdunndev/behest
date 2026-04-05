@@ -200,19 +200,25 @@ All implementations produce identical ciphertext for the same inputs.
 
 ## Authentication
 
-### v1 (MVP)
+All endpoints require a shared bearer token via the `Authorization` header:
 
-No authentication. Security relies on:
+```
+Authorization: Bearer <token>
+```
+
+The token is configured as a secret on the Worker (`AUTH_TOKEN`) and in the
+agent config (`auth_token`). The Go SDK sets it via `Client.AuthToken`.
+
+If `AUTH_TOKEN` is not set on the Worker, the broker runs unauthenticated
+(development only). In production, always set a token.
+
+**Response: 401 Unauthorized** if the token is missing or invalid.
+
+Additional security properties:
 - Request IDs are UUIDv4 (128 bits of entropy)
 - Short TTL (10 minutes default)
 - Single-use (consumed on first retrieval after fulfillment)
-- E2E encryption (even if intercepted, credential is encrypted)
-
-### v2 (future)
-
-Bearer token authentication for multi-user deployments. The broker
-validates tokens on all endpoints. Token management is out of scope
-for the protocol spec.
+- E2E encryption (even if intercepted, credential is encrypted to requester's ephemeral key)
 
 ## Notification Protocol
 

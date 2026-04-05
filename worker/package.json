@@ -7,12 +7,13 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "build": "wrangler deploy --dry-run --outdir dist",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsc --noEmit"
   },
   "license": "MIT",
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260405.1",
-    "typescript": "^6.0.2",
-    "wrangler": "^4.80.0"
+    "@cloudflare/workers-types": "^4.20250405.0",
+    "typescript": "^5.7.0",
+    "wrangler": "^4.0.0"
   }
 }

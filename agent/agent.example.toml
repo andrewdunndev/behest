@@ -4,6 +4,9 @@
 # Broker URL (required)
 broker_url = "https://behest.example.workers.dev"
 
+# Bearer token for broker authentication (must match AUTH_TOKEN on the Worker)
+# auth_token = "your-shared-secret"
+
 # How often to poll the broker for new requests (seconds)
 poll_interval_secs = 2
 
@@ -11,4 +14,7 @@ poll_interval_secs = 2
 # Receives request JSON via BEHEST_REQUEST_JSON env var.
 # If the hook writes a credential to stdout and exits 0, the agent
 # auto-submits it. If it exits non-zero, falls back to interactive.
+#
+# SECURITY: The env var contains attacker-controlled fields (service,
+# message, hint). Do not shell-expand it. Parse it with jq or similar.
 # on_request_hook = "~/.config/behest/hooks/auto-fulfill.sh"

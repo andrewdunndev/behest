@@ -1,11 +1,12 @@
-.PHONY: all worker agent sdk clean dev test
+.PHONY: all worker agent sdk clean test \
+	worker-dev worker-deploy worker-test worker-typecheck \
+	agent-dev agent-test sdk-test
 
 all: worker agent sdk
 
 # --- Worker ---
 
-worker:
-	cd worker && npm run build
+worker: worker-typecheck
 
 worker-dev:
 	cd worker && npx wrangler dev
@@ -15,6 +16,9 @@ worker-deploy:
 
 worker-test:
 	cd worker && npm test
+
+worker-typecheck:
+	cd worker && npx tsc --noEmit
 
 # --- Agent ---
 
@@ -41,3 +45,9 @@ test: worker-test agent-test sdk-test
 
 clean:
 	rm -rf worker/dist worker/node_modules agent/target
+
+# --- Setup ---
+
+setup:
+	cd worker && npm install
+	cd agent && cargo fetch

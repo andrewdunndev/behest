@@ -15,7 +15,7 @@ mod notifier;
 mod tray;
 
 #[derive(Parser)]
-#[command(name = "behest-agent", about = "behest credential relay agent")]
+#[command(name = "behest-agent", version, about = "behest credential relay agent")]
 struct Cli {
     /// Path to config file
     #[arg(short, long)]
@@ -33,6 +33,7 @@ struct Cli {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AgentConfig {
     pub broker_url: String,
+    pub auth_token: Option<String>,
     #[serde(default = "default_poll_interval")]
     pub poll_interval_secs: u64,
     pub on_request_hook: Option<String>,
@@ -92,7 +93,7 @@ async fn run_headless(config: AgentConfig) -> anyhow::Result<()> {
     let mut known_ids = std::collections::HashSet::<String>::new();
 
     loop {
-        match fetch_pending(&client, &config.broker_url).await {
+        match fetch_pending(&client, &config.broker_url, config.auth_token.as_deref()).await {
             Ok(requests) => {
                 // Prune known_ids: remove IDs no longer in the pending list
                 let active_ids: std::collections::HashSet<&str> =
@@ -119,6 +120,7 @@ async fn run_headless(config: AgentConfig) -> anyhow::Result<()> {
                         fulfill_request(
                             &client,
                             &config.broker_url,
+                            config.auth_token.as_deref(),
                             &req.id,
                             credential.as_bytes(),
                             &req.public_key,
@@ -141,6 +143,7 @@ async fn run_headless(config: AgentConfig) -> anyhow::Result<()> {
                     fulfill_request(
                         &client,
                         &config.broker_url,
+                        config.auth_token.as_deref(),
                         &req.id,
                         input.as_bytes(),
                         &req.public_key,
@@ -160,14 +163,18 @@ async fn run_headless(config: AgentConfig) -> anyhow::Result<()> {
 pub async fn fetch_pending(
     client: &reqwest::Client,
     broker_url: &str,
+    auth_token: Option<&str>,
 ) -> anyhow::Result<Vec<PendingRequest>> {
-    let resp = client
-        .get(format!("{}/v1/requests/pending", broker_url))
-        .send()
-        .await?;
+    let mut req = client.get(format!("{}/v1/requests/pending", broker_url));
+    if let Some(token) = auth_token {
+        req = req.header("Authorization", format!("Bearer {}", token));
+    }
+    let resp = req.send().await?;
 
     if !resp.status().is_success() {
-        anyhow::bail!("broker returned {}", resp.status());
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        anyhow::bail!("broker returned {}: {}", status, body);
     }
 
     #[derive(Deserialize)]
@@ -213,13 +220,14 @@ pub fn encrypt_credential(
 pub async fn fulfill_request(
     client: &reqwest::Client,
     broker_url: &str,
+    auth_token: Option<&str>,
     request_id: &str,
     credential: &[u8],
     requester_public_key: &str,
 ) -> anyhow::Result<()> {
     let (nonce, ciphertext, agent_pub) = encrypt_credential(credential, requester_public_key)?;
 
-    let resp = client
+    let mut req = client
         .post(format!(
             "{}/v1/requests/{}/fulfill",
             broker_url, request_id
@@ -228,9 +236,11 @@ pub async fn fulfill_request(
             "nonce": nonce,
             "ciphertext": ciphertext,
             "agent_public_key": agent_pub,
-        }))
-        .send()
-        .await?;
+        }));
+    if let Some(token) = auth_token {
+        req = req.header("Authorization", format!("Bearer {}", token));
+    }
+    let resp = req.send().await?;
 
     if resp.status().as_u16() != 204 {
         let body = resp.text().await.unwrap_or_default();

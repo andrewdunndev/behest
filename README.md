@@ -18,33 +18,71 @@ sees plaintext.
 ```
 
 Both sides are outbound-only. No inbound connections. No NAT traversal.
+All endpoints require bearer token authentication.
 
 ## Components
 
 | Directory | Language | Purpose |
 |-----------|----------|---------|
-| `worker/` | TypeScript | Cloudflare Worker broker (~200 lines) |
+| `worker/` | TypeScript | Cloudflare Worker broker |
 | `agent/` | Rust | Laptop daemon (system tray, notifications, encryption) |
 | `sdk/` | Go | Client library for requesting services |
 | `spec/` | Markdown | Wire protocol specification |
 
-## Quick Start
+## Deploy
+
+### 1. Broker (Cloudflare Worker)
 
 ```bash
-# Deploy the broker
-cd worker && npx wrangler deploy
+cd worker && npm install
 
-# Run the agent
-cd agent && cargo run --release
+# Create KV namespace and note the ID
+npx wrangler kv namespace create REQUESTS
+npx wrangler kv namespace create REQUESTS --preview
 
-# In your Go service
+# Edit wrangler.toml: paste the namespace IDs
+
+# Set the shared auth token
+npx wrangler secret put AUTH_TOKEN
+
+# Optionally configure notifiers in wrangler.toml [vars] NOTIFIERS
+
+# Deploy
+npx wrangler deploy
+```
+
+### 2. Agent (laptop daemon)
+
+```bash
+cd agent && cargo build --release
+
+# Create config
+mkdir -p ~/.config/behest
+cp agent.example.toml ~/.config/behest/agent.toml
+# Edit: set broker_url and auth_token
+
+# Run
+./target/release/behest-agent
+# Or headless: ./target/release/behest-agent --headless
+```
+
+### 3. SDK (in your Go service)
+
+```go
 import "gitlab.com/dunn.dev/behest/behest/sdk"
+
+client := behest.NewClient("https://behest.your-account.workers.dev")
+client.AuthToken = "your-shared-secret"
+
+req, err := client.CreateRequest(ctx, "my-app", "Need API token", "Go to Settings > API Keys")
+credential, err := req.Wait(ctx, behest.DefaultPollInterval)
 ```
 
 ## Security
 
 - E2E encryption: X25519 + NaCl box (XSalsa20-Poly1305)
 - Broker stores only ciphertext; never holds plaintext credentials
+- Bearer token authentication on all endpoints
 - Request IDs are UUIDv4, short TTL, single-use
 - Both requester and agent are outbound-only
 

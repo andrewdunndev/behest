@@ -6,6 +6,7 @@ export interface Env {
   REQUEST_TTL_SECONDS: string;
   MAX_CREDENTIAL_BYTES: string;
   NOTIFIERS: string; // JSON array of notifier configs
+  AUTH_TOKEN: string; // Shared bearer token (set via wrangler secret)
 }
 
 interface CreateRequest {
@@ -35,7 +36,6 @@ interface NotifierConfig {
   type: "ntfy" | "webhook";
   url: string;
   headers?: Record<string, string>;
-  topic?: string;
 }
 
 // --- CORS ---
@@ -53,6 +53,19 @@ function corsify(response: Response): Response {
     headers.set(k, v);
   }
   return new Response(response.body, { status: response.status, headers });
+}
+
+// --- Auth ---
+
+function authenticate(request: Request, env: Env): Response | null {
+  if (!env.AUTH_TOKEN) {
+    return null; // No token configured = open (development only)
+  }
+  const auth = request.headers.get("Authorization");
+  if (!auth || auth !== `Bearer ${env.AUTH_TOKEN}`) {
+    return errorResponse("unauthorized", "Missing or invalid Authorization header", 401);
+  }
+  return null;
 }
 
 // --- Helpers ---
@@ -76,9 +89,24 @@ function maxCredentialBytes(env: Env): number {
   return parseInt(env.MAX_CREDENTIAL_BYTES || "65536", 10);
 }
 
+function decodeBase64Url(s: string): Uint8Array | null {
+  try {
+    // Pad to multiple of 4
+    const padded = s + "=".repeat((4 - (s.length % 4)) % 4);
+    const binary = atob(padded.replace(/-/g, "+").replace(/_/g, "/"));
+    return Uint8Array.from(binary, (c) => c.charCodeAt(0));
+  } catch {
+    return null;
+  }
+}
+
 // --- Notifiers ---
 
-async function fireNotifiers(env: Env, request: StoredRequest): Promise<void> {
+async function fireNotifiers(
+  env: Env,
+  brokerUrl: string,
+  request: StoredRequest,
+): Promise<void> {
   let configs: NotifierConfig[];
   try {
     configs = JSON.parse(env.NOTIFIERS || "[]");
@@ -91,6 +119,7 @@ async function fireNotifiers(env: Env, request: StoredRequest): Promise<void> {
       id: request.id,
       service: request.service,
       message: request.message,
+      broker: brokerUrl,
       created_at: request.created_at,
       expires_at: request.expires_at,
     };
@@ -100,7 +129,6 @@ async function fireNotifiers(env: Env, request: StoredRequest): Promise<void> {
         await fetch(config.url, {
           method: "POST",
           headers: {
-            "Content-Type": "application/json",
             Title: `behest: ${request.service}`,
             Priority: "high",
             Tags: "key",
@@ -128,7 +156,11 @@ async function fireNotifiers(env: Env, request: StoredRequest): Promise<void> {
 
 // --- Route: POST /v1/requests ---
 
-async function createRequest(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+async function createRequest(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<Response> {
   let body: CreateRequest;
   try {
     body = (await request.json()) as CreateRequest;
@@ -154,14 +186,13 @@ async function createRequest(request: Request, env: Env, ctx: ExecutionContext):
   if (body.hint && body.hint.length > 4096) {
     return errorResponse("bad_request", "Hint exceeds 4 KiB", 400);
   }
-  // Validate public key is valid base64url and decodes to 32 bytes
-  try {
-    const keyBytes = Uint8Array.from(atob(body.public_key.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
-    if (keyBytes.length !== 32) {
-      return errorResponse("bad_request", "public_key must be 32 bytes (X25519)", 400);
-    }
-  } catch {
-    return errorResponse("bad_request", "public_key is not valid base64url", 400);
+  const keyBytes = decodeBase64Url(body.public_key);
+  if (!keyBytes || keyBytes.length !== 32) {
+    return errorResponse(
+      "bad_request",
+      "public_key must be 32 bytes X25519, base64url-encoded",
+      400,
+    );
   }
 
   const id = crypto.randomUUID();
@@ -189,11 +220,14 @@ async function createRequest(request: Request, env: Env, ctx: ExecutionContext):
     expirationTtl: ttlSeconds,
   });
 
-  // Fire notifiers in background (ctx.waitUntil ensures they complete
-  // even after the response is returned)
-  ctx.waitUntil(fireNotifiers(env, stored));
+  // Fire notifiers in background
+  const brokerUrl = new URL(request.url).origin;
+  ctx.waitUntil(fireNotifiers(env, brokerUrl, stored));
 
-  return json({ id, expires_at: expiresAt.toISOString(), status: "pending" }, 201);
+  return json(
+    { id, expires_at: expiresAt.toISOString(), status: "pending" },
+    201,
+  );
 }
 
 // --- Route: GET /v1/requests/:id ---
@@ -201,7 +235,6 @@ async function createRequest(request: Request, env: Env, ctx: ExecutionContext):
 async function getRequest(id: string, env: Env): Promise<Response> {
   const raw = await env.REQUESTS.get(`req:${id}`);
   if (raw === null) {
-    // Check if it was consumed
     const consumed = await env.REQUESTS.get(`consumed:${id}`);
     if (consumed !== null) {
       return errorResponse("gone", "Request was already consumed", 410);
@@ -215,7 +248,9 @@ async function getRequest(id: string, env: Env): Promise<Response> {
     // Single-use: delete the request, mark as consumed
     await env.REQUESTS.delete(`req:${id}`);
     await env.REQUESTS.delete(`pending:${id}`);
-    await env.REQUESTS.put(`consumed:${id}`, "1", { expirationTtl: ttl(env) });
+    await env.REQUESTS.put(`consumed:${id}`, "1", {
+      expirationTtl: ttl(env),
+    });
 
     return json({
       id: stored.id,
@@ -238,7 +273,11 @@ async function getRequest(id: string, env: Env): Promise<Response> {
 
 // --- Route: POST /v1/requests/:id/fulfill ---
 
-async function fulfillRequest(id: string, request: Request, env: Env): Promise<Response> {
+async function fulfillRequest(
+  id: string,
+  request: Request,
+  env: Env,
+): Promise<Response> {
   const raw = await env.REQUESTS.get(`req:${id}`);
   if (raw === null) {
     return errorResponse("not_found", "Request not found or expired", 404);
@@ -257,13 +296,21 @@ async function fulfillRequest(id: string, request: Request, env: Env): Promise<R
   }
 
   if (!body.nonce || !body.ciphertext || !body.agent_public_key) {
-    return errorResponse("bad_request", "Missing nonce, ciphertext, or agent_public_key", 400);
+    return errorResponse(
+      "bad_request",
+      "Missing nonce, ciphertext, or agent_public_key",
+      400,
+    );
   }
 
-  // Check credential size (base64 is ~4/3 of raw)
-  const estimatedSize = Math.ceil(body.ciphertext.length * 3 / 4);
+  // Check credential size (base64url is ~4/3 of raw)
+  const estimatedSize = Math.ceil((body.ciphertext.length * 3) / 4);
   if (estimatedSize > maxCredentialBytes(env)) {
-    return errorResponse("payload_too_large", "Credential exceeds size limit", 413);
+    return errorResponse(
+      "payload_too_large",
+      "Credential exceeds size limit",
+      413,
+    );
   }
 
   stored.status = "fulfilled";
@@ -276,7 +323,9 @@ async function fulfillRequest(id: string, request: Request, env: Env): Promise<R
   // Calculate remaining TTL
   const remaining = Math.max(
     60,
-    Math.floor((new Date(stored.expires_at).getTime() - Date.now()) / 1000)
+    Math.floor(
+      (new Date(stored.expires_at).getTime() - Date.now()) / 1000,
+    ),
   );
 
   await env.REQUESTS.put(`req:${id}`, JSON.stringify(stored), {
@@ -295,9 +344,8 @@ async function listPending(env: Env): Promise<Response> {
   const entries = await Promise.all(
     list.keys.map(async (key) => {
       const id = key.name.slice("pending:".length);
-      const raw = await env.REQUESTS.get(`req:${id}`);
-      return raw;
-    })
+      return env.REQUESTS.get(`req:${id}`);
+    }),
   );
 
   const requests = entries
@@ -320,6 +368,10 @@ async function listPending(env: Env): Promise<Response> {
 // --- Route: DELETE /v1/requests/:id ---
 
 async function deleteRequest(id: string, env: Env): Promise<Response> {
+  const raw = await env.REQUESTS.get(`req:${id}`);
+  if (raw === null) {
+    return errorResponse("not_found", "Request not found or expired", 404);
+  }
   await env.REQUESTS.delete(`req:${id}`);
   await env.REQUESTS.delete(`pending:${id}`);
   return new Response(null, { status: 204 });
@@ -327,7 +379,15 @@ async function deleteRequest(id: string, env: Env): Promise<Response> {
 
 // --- Router ---
 
-async function handleRequest(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+async function handleRequest(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<Response> {
+  // Authenticate all requests
+  const authError = authenticate(request, env);
+  if (authError) return authError;
+
   const url = new URL(request.url);
   const path = url.pathname;
   const method = request.method;
@@ -349,7 +409,9 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
   }
 
   // POST /v1/requests/:id/fulfill
-  const fulfillMatch = path.match(/^\/v1\/requests\/([0-9a-f-]{36})\/fulfill$/);
+  const fulfillMatch = path.match(
+    /^\/v1\/requests\/([0-9a-f-]{36})\/fulfill$/,
+  );
   if (fulfillMatch && method === "POST") {
     return fulfillRequest(fulfillMatch[1], request, env);
   }
@@ -366,7 +428,11 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 // --- Entry point ---
 
 export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  async fetch(
+    request: Request,
+    env: Env,
+    ctx: ExecutionContext,
+  ): Promise<Response> {
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
