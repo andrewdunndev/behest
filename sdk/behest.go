@@ -23,6 +23,12 @@ import (
 // DefaultPollInterval is the recommended polling interval.
 const DefaultPollInterval = 2 * time.Second
 
+// Sentinel errors for programmatic handling.
+var (
+	ErrExpired  = fmt.Errorf("behest: request expired or not found")
+	ErrConsumed = fmt.Errorf("behest: request already consumed")
+)
+
 // Client talks to a behest broker.
 type Client struct {
 	BrokerURL  string
@@ -135,10 +141,10 @@ func (r *Request) Poll(ctx context.Context) (*PollResult, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("request expired or not found")
+		return nil, ErrExpired
 	}
 	if resp.StatusCode == http.StatusGone {
-		return nil, fmt.Errorf("request already consumed")
+		return nil, ErrConsumed
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, readError(resp)

@@ -8,10 +8,8 @@ use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIconBuilder};
 use tracing::{error, info, warn};
 
-use crate::{
-    fetch_pending, fulfill_request, notifier, try_hook,
-    AgentConfig, PendingRequest,
-};
+use crate::broker::BrokerClient;
+use crate::{notifier, try_hook, AgentConfig, PendingRequest};
 
 /// Messages from the async worker to the UI thread.
 #[derive(Debug)]
@@ -33,8 +31,7 @@ enum UserEvent {
 }
 
 fn load_icon() -> Icon {
-    // 16x16 RGBA icon — solid circle placeholder for menu bar
-    // Template icon: white pixels on transparent, macOS will adapt to theme
+    // 16x16 RGBA template icon — white circle, macOS adapts to theme
     let mut rgba = vec![0u8; 16 * 16 * 4];
     for y in 0..16u32 {
         for x in 0..16u32 {
@@ -42,10 +39,10 @@ fn load_icon() -> Icon {
             let dy = y as f32 - 7.5;
             if dx * dx + dy * dy <= 36.0 {
                 let idx = ((y * 16 + x) * 4) as usize;
-                rgba[idx] = 255;     // R
-                rgba[idx + 1] = 255; // G
-                rgba[idx + 2] = 255; // B
-                rgba[idx + 3] = 255; // A
+                rgba[idx] = 255;
+                rgba[idx + 1] = 255;
+                rgba[idx + 2] = 255;
+                rgba[idx + 3] = 255;
             }
         }
     }
@@ -56,35 +53,27 @@ fn load_icon() -> Icon {
 /// Main thread: tao event loop (AppKit)
 /// Background: tokio runtime for HTTP polling and hook execution
 pub fn run(config: AgentConfig) -> anyhow::Result<()> {
-    // Build tokio runtime on background threads (NOT the main thread)
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
 
-    // Channels: async worker -> UI (std::sync for non-blocking try_recv)
     let (ui_tx, ui_rx) = std::sync::mpsc::channel::<UiMessage>();
-    // Channels: UI -> async worker (tokio for async recv)
     let (cmd_tx, cmd_rx) = tokio_mpsc::unbounded_channel::<WorkerCommand>();
 
-    // Spawn the async polling worker on the tokio runtime
     let worker_config = config.clone();
     rt.spawn(async move {
         async_worker(worker_config, ui_tx, cmd_rx).await;
     });
 
-    // Build the tao event loop on the main thread
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
 
-    // Forward tray and menu events into the event loop
     let proxy = event_loop.create_proxy();
     MenuEvent::set_event_handler(Some(move |_e| {
-        // Wake the event loop so it drains messages
         let _ = proxy.send_event(UserEvent::Wake);
     }));
 
     let pending: Arc<Mutex<Vec<PendingRequest>>> = Arc::new(Mutex::new(Vec::new()));
 
-    // Menu items (created before the event loop takes over)
     let status_item = MenuItem::new("behest: waiting...", false, None);
     let quit_item = MenuItem::new("Quit", true, None);
     let quit_id = quit_item.id().clone();
@@ -96,14 +85,12 @@ pub fn run(config: AgentConfig) -> anyhow::Result<()> {
 
     let mut _tray_icon: Option<tray_icon::TrayIcon> = None;
 
-    // Periodic timer to drain async messages
+    // Wake the event loop periodically to drain messages
     let proxy2 = event_loop.create_proxy();
     rt.spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_millis(250)).await;
-            // Wake the event loop to check for new messages
-            if proxy2.send_event(UserEvent::Wake).is_err()
-            {
+            if proxy2.send_event(UserEvent::Wake).is_err() {
                 break;
             }
         }
@@ -112,14 +99,12 @@ pub fn run(config: AgentConfig) -> anyhow::Result<()> {
     event_loop.run(move |event, _event_loop, control_flow| {
         *control_flow = ControlFlow::Wait;
 
-        // Drain messages from the async worker
         while let Ok(msg) = ui_rx.try_recv() {
             match msg {
                 UiMessage::NewRequests(requests) => {
                     for req in &requests {
                         notifier::notify_new_request(req);
                     }
-
                     let mut p = pending.lock().unwrap();
                     p.extend(requests);
                     let count = p.len();
@@ -145,44 +130,38 @@ pub fn run(config: AgentConfig) -> anyhow::Result<()> {
             }
         }
 
-        // Drain menu events
         while let Ok(event) = MenuEvent::receiver().try_recv() {
             if event.id == quit_id {
                 let _ = cmd_tx.send(WorkerCommand::Quit);
-                _tray_icon.take(); // drop to remove from menu bar
+                _tray_icon.take();
                 *control_flow = ControlFlow::Exit;
                 return;
             }
         }
 
-        match event {
-            Event::NewEvents(StartCause::Init) => {
-                // Create tray icon AFTER event loop is running (macOS requirement)
-                _tray_icon = Some(
-                    TrayIconBuilder::new()
-                        .with_menu(Box::new(menu.clone()))
-                        .with_tooltip("behest agent")
-                        .with_icon(load_icon())
-                        .with_icon_as_template(true)
-                        .with_menu_on_left_click(true)
-                        .build()
-                        .expect("failed to build tray icon"),
-                );
-                info!("tray icon created");
-            }
-            _ => {}
+        if let Event::NewEvents(StartCause::Init) = event {
+            _tray_icon = Some(
+                TrayIconBuilder::new()
+                    .with_menu(Box::new(menu.clone()))
+                    .with_tooltip("behest agent")
+                    .with_icon(load_icon())
+                    .with_icon_as_template(true)
+                    .with_menu_on_left_click(true)
+                    .build()
+                    .expect("failed to build tray icon"),
+            );
+            info!("tray icon created");
         }
     });
 }
 
 /// Async worker: polls the broker, runs hooks, fulfills requests.
-/// Runs entirely on the tokio runtime (background threads).
 async fn async_worker(
     config: AgentConfig,
     ui_tx: std::sync::mpsc::Sender<UiMessage>,
     mut cmd_rx: tokio_mpsc::UnboundedReceiver<WorkerCommand>,
 ) {
-    let client = reqwest::Client::new();
+    let client = BrokerClient::new(&config);
     let interval = Duration::from_secs(config.poll_interval_secs);
     let mut known_ids = std::collections::HashSet::<String>::new();
     let mut poll_interval = tokio::time::interval(interval);
@@ -190,9 +169,8 @@ async fn async_worker(
     loop {
         tokio::select! {
             _ = poll_interval.tick() => {
-                match fetch_pending(&client, &config.broker_url, config.auth_token.as_deref()).await {
+                match client.fetch_pending().await {
                     Ok(requests) => {
-                        // Prune known_ids: remove IDs no longer pending
                         let active_ids: std::collections::HashSet<&str> =
                             requests.iter().map(|r| r.id.as_str()).collect();
                         known_ids.retain(|id| active_ids.contains(id.as_str()));
@@ -207,29 +185,20 @@ async fn async_worker(
                         }
 
                         if !new.is_empty() {
-                            // Try hooks for each new request
                             let mut hook_fulfilled = Vec::new();
                             for req in &new {
                                 if let Some(credential) = try_hook(&config, req).await {
-                                    match fulfill_request(
-                                        &client,
-                                        &config.broker_url,
-                                        config.auth_token.as_deref(),
+                                    match client.fulfill(
                                         &req.id,
                                         credential.as_bytes(),
                                         &req.public_key,
                                     ).await {
-                                        Ok(()) => {
-                                            hook_fulfilled.push(req.id.clone());
-                                        }
-                                        Err(e) => {
-                                            error!(error = %e, request_id = %req.id, "auto-fulfill failed");
-                                        }
+                                        Ok(()) => hook_fulfilled.push(req.id.clone()),
+                                        Err(e) => error!(error = %e, request_id = %req.id, "auto-fulfill failed"),
                                     }
                                 }
                             }
 
-                            // Only send unfulfilled requests to the UI
                             let pending_for_ui: Vec<PendingRequest> = new
                                 .into_iter()
                                 .filter(|r| !hook_fulfilled.contains(&r.id))

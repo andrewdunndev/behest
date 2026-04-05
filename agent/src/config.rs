@@ -39,5 +39,10 @@ pub fn load(path: Option<PathBuf>, broker_override: Option<String>) -> anyhow::R
     // Strip trailing slash
     config.broker_url = config.broker_url.trim_end_matches('/').to_string();
 
+    // Warn if broker URL is not HTTPS
+    if !config.broker_url.starts_with("https://") && !config.broker_url.starts_with("http://localhost") {
+        tracing::warn!("broker URL is not HTTPS — credentials in transit may be exposed");
+    }
+
     Ok(config)
 }

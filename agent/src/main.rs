@@ -1,15 +1,11 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use base64::Engine;
-use clap::Parser;
-use crypto_box::aead::{Aead, OsRng};
-use crypto_box::{PublicKey, SalsaBox, SecretKey};
-use rand::RngCore;
+use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
+pub mod broker;
 mod config;
 mod notifier;
 mod tray;
@@ -18,16 +14,35 @@ mod tray;
 #[command(name = "behest-agent", version, about = "behest credential relay agent")]
 struct Cli {
     /// Path to config file
-    #[arg(short, long)]
+    #[arg(short, long, global = true)]
     config: Option<PathBuf>,
 
     /// Broker URL (overrides config)
-    #[arg(short, long)]
+    #[arg(short, long, global = true)]
     broker: Option<String>,
 
-    /// Run in headless mode (no system tray, TUI only)
-    #[arg(long)]
-    headless: bool,
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Run the agent daemon (default if no subcommand given)
+    Run {
+        /// Run in headless mode (no system tray, TUI only)
+        #[arg(long)]
+        headless: bool,
+    },
+    /// List pending credential requests
+    List,
+    /// Fulfill a pending credential request
+    Fulfill {
+        /// Request ID to fulfill
+        id: String,
+        /// Credential value (reads from stdin if omitted)
+        #[arg(short, long)]
+        credential: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -54,13 +69,6 @@ pub struct PendingRequest {
     pub expires_at: String,
 }
 
-#[derive(Debug)]
-pub enum AgentEvent {
-    NewRequests(Vec<PendingRequest>),
-    FulfillRequest { id: String, credential: String },
-    Quit,
-}
-
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -72,30 +80,114 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let config = config::load(cli.config, cli.broker)?;
 
-    info!(broker = %config.broker_url, "starting behest agent");
+    match cli.command {
+        Some(Command::List) => {
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(cmd_list(config))
+        }
+        Some(Command::Fulfill { id, credential }) => {
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(cmd_fulfill(config, id, credential))
+        }
+        Some(Command::Run { headless }) => {
+            info!(broker = %config.broker_url, "starting behest agent");
+            if headless {
+                let rt = tokio::runtime::Runtime::new()?;
+                rt.block_on(run_headless(config))
+            } else {
+                tray::run(config)
+            }
+        }
+        None => {
+            // Default: run as tray daemon
+            info!(broker = %config.broker_url, "starting behest agent");
+            tray::run(config)
+        }
+    }
+}
 
-    if cli.headless {
-        // Headless mode: tokio owns the main thread, no GUI
-        let rt = tokio::runtime::Runtime::new()?;
-        rt.block_on(run_headless(config))?;
-    } else {
-        // GUI mode: main thread runs tao event loop (macOS AppKit requirement)
-        // tokio runtime runs on background threads
-        tray::run(config)?;
+// --- Subcommand: list ---
+
+async fn cmd_list(config: AgentConfig) -> anyhow::Result<()> {
+    let client = broker::BrokerClient::new(&config);
+    let requests = client.fetch_pending().await?;
+
+    if requests.is_empty() {
+        println!("No pending requests.");
+        return Ok(());
+    }
+
+    for req in &requests {
+        println!(
+            "{id}  {service:20}  {message}",
+            id = req.id,
+            service = req.service,
+            message = req.message,
+        );
+        if !req.hint.is_empty() {
+            println!("  hint: {}", req.hint);
+        }
+        println!("  expires: {}", req.expires_at);
+        println!();
     }
 
     Ok(())
 }
 
+// --- Subcommand: fulfill ---
+
+async fn cmd_fulfill(
+    config: AgentConfig,
+    id: String,
+    credential: Option<String>,
+) -> anyhow::Result<()> {
+    let client = broker::BrokerClient::new(&config);
+
+    // Find the request to get its public key
+    let requests = client.fetch_pending().await?;
+    let req = requests
+        .iter()
+        .find(|r| r.id == id)
+        .ok_or_else(|| anyhow::anyhow!("request {} not found in pending list", id))?;
+
+    let credential_bytes = match credential {
+        Some(c) => c.into_bytes(),
+        None => {
+            println!("Service: {}", req.service);
+            println!("Message: {}", req.message);
+            if !req.hint.is_empty() {
+                println!("Hint: {}", req.hint);
+            }
+            println!();
+            eprint!("Enter credential: ");
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+            input.trim().to_string().into_bytes()
+        }
+    };
+
+    if credential_bytes.is_empty() {
+        anyhow::bail!("credential cannot be empty");
+    }
+
+    client
+        .fulfill(&id, &credential_bytes, &req.public_key)
+        .await?;
+
+    println!("Fulfilled request {}", id);
+    Ok(())
+}
+
+// --- Daemon: headless ---
+
 async fn run_headless(config: AgentConfig) -> anyhow::Result<()> {
-    let client = reqwest::Client::new();
+    let client = broker::BrokerClient::new(&config);
     let interval = Duration::from_secs(config.poll_interval_secs);
     let mut known_ids = std::collections::HashSet::<String>::new();
 
     loop {
-        match fetch_pending(&client, &config.broker_url, config.auth_token.as_deref()).await {
+        match client.fetch_pending().await {
             Ok(requests) => {
-                // Prune known_ids: remove IDs no longer in the pending list
                 let active_ids: std::collections::HashSet<&str> =
                     requests.iter().map(|r| r.id.as_str()).collect();
                 known_ids.retain(|id| active_ids.contains(id.as_str()));
@@ -105,8 +197,8 @@ async fn run_headless(config: AgentConfig) -> anyhow::Result<()> {
                     .filter(|r: &PendingRequest| !known_ids.contains(&r.id))
                     .collect::<Vec<PendingRequest>>();
 
-                for req in &new {
-                    known_ids.insert(req.id.clone());
+                for r in &new {
+                    known_ids.insert(r.id.clone());
                 }
 
                 for req in new {
@@ -115,21 +207,13 @@ async fn run_headless(config: AgentConfig) -> anyhow::Result<()> {
                         req.id, req.service, req.message, req.hint, req.expires_at
                     );
 
-                    // Try hook first
                     if let Some(credential) = try_hook(&config, &req).await {
-                        fulfill_request(
-                            &client,
-                            &config.broker_url,
-                            config.auth_token.as_deref(),
-                            &req.id,
-                            credential.as_bytes(),
-                            &req.public_key,
-                        )
-                        .await?;
+                        client
+                            .fulfill(&req.id, credential.as_bytes(), &req.public_key)
+                            .await?;
                         continue;
                     }
 
-                    // Interactive fallback
                     println!("Enter credential (or 'skip' to skip):");
                     let mut input = String::new();
                     std::io::stdin().read_line(&mut input)?;
@@ -140,15 +224,9 @@ async fn run_headless(config: AgentConfig) -> anyhow::Result<()> {
                         continue;
                     }
 
-                    fulfill_request(
-                        &client,
-                        &config.broker_url,
-                        config.auth_token.as_deref(),
-                        &req.id,
-                        input.as_bytes(),
-                        &req.public_key,
-                    )
-                    .await?;
+                    client
+                        .fulfill(&req.id, input.as_bytes(), &req.public_key)
+                        .await?;
                 }
             }
             Err(e) => {
@@ -160,104 +238,12 @@ async fn run_headless(config: AgentConfig) -> anyhow::Result<()> {
     }
 }
 
-pub async fn fetch_pending(
-    client: &reqwest::Client,
-    broker_url: &str,
-    auth_token: Option<&str>,
-) -> anyhow::Result<Vec<PendingRequest>> {
-    let mut req = client.get(format!("{}/v1/requests/pending", broker_url));
-    if let Some(token) = auth_token {
-        req = req.header("Authorization", format!("Bearer {}", token));
-    }
-    let resp = req.send().await?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        anyhow::bail!("broker returned {}: {}", status, body);
-    }
-
-    #[derive(Deserialize)]
-    struct PendingResponse {
-        requests: Vec<PendingRequest>,
-    }
-
-    let body: PendingResponse = resp.json().await?;
-    Ok(body.requests)
-}
-
-pub fn encrypt_credential(
-    credential: &[u8],
-    requester_public_key_b64: &str,
-) -> anyhow::Result<(String, String, String)> {
-    let requester_pub_bytes = URL_SAFE_NO_PAD.decode(requester_public_key_b64)?;
-    if requester_pub_bytes.len() != 32 {
-        anyhow::bail!("invalid public key length: expected 32, got {}", requester_pub_bytes.len());
-    }
-
-    let requester_pub = PublicKey::from_slice(&requester_pub_bytes)
-        .map_err(|e| anyhow::anyhow!("invalid public key: {}", e))?;
-
-    let agent_secret = SecretKey::generate(&mut OsRng);
-    let agent_public = agent_secret.public_key();
-
-    let salsa_box = SalsaBox::new(&requester_pub, &agent_secret);
-
-    let mut nonce_bytes = [0u8; 24];
-    OsRng.fill_bytes(&mut nonce_bytes);
-    let nonce = crypto_box::Nonce::from_slice(&nonce_bytes);
-    let ciphertext = salsa_box
-        .encrypt(nonce, credential)
-        .map_err(|e| anyhow::anyhow!("encryption failed: {}", e))?;
-
-    Ok((
-        URL_SAFE_NO_PAD.encode(nonce.as_slice()),
-        URL_SAFE_NO_PAD.encode(&ciphertext),
-        URL_SAFE_NO_PAD.encode(agent_public.as_bytes()),
-    ))
-}
-
-pub async fn fulfill_request(
-    client: &reqwest::Client,
-    broker_url: &str,
-    auth_token: Option<&str>,
-    request_id: &str,
-    credential: &[u8],
-    requester_public_key: &str,
-) -> anyhow::Result<()> {
-    let (nonce, ciphertext, agent_pub) = encrypt_credential(credential, requester_public_key)?;
-
-    let mut req = client
-        .post(format!(
-            "{}/v1/requests/{}/fulfill",
-            broker_url, request_id
-        ))
-        .json(&serde_json::json!({
-            "nonce": nonce,
-            "ciphertext": ciphertext,
-            "agent_public_key": agent_pub,
-        }));
-    if let Some(token) = auth_token {
-        req = req.header("Authorization", format!("Bearer {}", token));
-    }
-    let resp = req.send().await?;
-
-    if resp.status().as_u16() != 204 {
-        let body = resp.text().await.unwrap_or_default();
-        anyhow::bail!("fulfill failed: {}", body);
-    }
-
-    info!(request_id, "request fulfilled");
-    Ok(())
-}
-
 pub async fn try_hook(config: &AgentConfig, request: &PendingRequest) -> Option<String> {
     let hook = config.on_request_hook.as_ref()?;
     let request_json = serde_json::to_string(request).ok()?;
 
     info!(hook, request_id = %request.id, "running on_request_hook");
 
-    // Use tokio::process::Command for non-blocking subprocess execution
     let output = tokio::process::Command::new("sh")
         .arg("-c")
         .arg(hook)
