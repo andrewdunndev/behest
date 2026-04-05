@@ -182,7 +182,13 @@ async fn cmd_enroll(
         on_request_hook: None,
     };
     let toml_str = toml::to_string_pretty(&config)?;
-    std::fs::write(&config_file, toml_str)?;
+    std::fs::write(&config_file, &toml_str)?;
+    // Restrict permissions — config contains the auth token
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&config_file, std::fs::Permissions::from_mode(0o600))?;
+    }
 
     println!("Enrolled as \"{}\"", agent_name);
     println!("Config written to {}", config_file.display());

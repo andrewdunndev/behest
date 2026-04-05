@@ -117,8 +117,9 @@ fn save_to_keychain(key_bytes: &[u8; 32]) -> anyhow::Result<()> {
 
 #[cfg(target_os = "macos")]
 fn load_from_keychain() -> anyhow::Result<SigningKey> {
-    use security_framework::passwords::{get_generic_password};
-    let bytes = get_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT)
+    use security_framework::passwords::{generic_password, PasswordOptions};
+    let opts = PasswordOptions::new_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
+    let bytes = generic_password(opts)
         .map_err(|e| anyhow::anyhow!("keychain read failed: {}", e))?;
     if bytes.len() != 32 {
         anyhow::bail!("keychain entry has wrong length: {}", bytes.len());
