@@ -1,0 +1,31 @@
+<svg viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg" font-family="'Courier New', monospace">
+  <rect x="0" y="0" width="256" height="256" fill="#faf6ed"/>
+  <rect x="20" y="20" width="216" height="216" fill="none" stroke="#2c2417" stroke-width="4"/>
+  <rect x="28" y="28" width="200" height="36" fill="#2c2417"/>
+  <text x="128" y="53" text-anchor="middle" font-size="18" fill="#faf6ed" font-weight="bold">behest</text>
+  <!-- Server box (left, needs credential) -->
+  <rect x="42" y="110" width="50" height="50" fill="none" stroke="#2c2417" stroke-width="3"/>
+  <line x1="52" y1="130" x2="72" y2="130" stroke="#6b5d4f" stroke-width="2"/>
+  <line x1="52" y1="138" x2="66" y2="138" stroke="#6b5d4f" stroke-width="2"/>
+  <line x1="52" y1="146" x2="70" y2="146" stroke="#6b5d4f" stroke-width="2"/>
+  <!-- Channel (the relay) -->
+  <line x1="92" y1="135" x2="164" y2="135" stroke="#2c2417" stroke-width="3"/>
+  <!-- Credential in transit -->
+  <circle cx="128" cy="135" r="8" fill="none" stroke="#2c2417" stroke-width="3"/>
+  <circle cx="128" cy="135" r="2.5" fill="#2c2417"/>
+  <!-- Arrows showing direction -->
+  <polygon points="152,130 160,135 152,140" fill="#2c2417"/>
+  <!-- Human box (right, has the credential) -->
+  <rect x="164" y="110" width="50" height="50" fill="none" stroke="#2c2417" stroke-width="3"/>
+  <!-- Person icon -->
+  <circle cx="189" cy="126" r="8" fill="none" stroke="#6b5d4f" stroke-width="2"/>
+  <path d="M177 155 Q177 142 189 142 Q201 142 201 155" fill="none" stroke="#6b5d4f" stroke-width="2"/>
+  <!-- E2E encryption lines -->
+  <line x1="105" y1="125" x2="105" y2="145" stroke="#c4b99a" stroke-width="1.5" stroke-dasharray="3,2"/>
+  <line x1="151" y1="125" x2="151" y2="145" stroke="#c4b99a" stroke-width="1.5" stroke-dasharray="3,2"/>
+  <!-- Labels -->
+  <text x="67" y="180" text-anchor="middle" font-size="7" fill="#6b5d4f">server</text>
+  <text x="189" y="180" text-anchor="middle" font-size="7" fill="#6b5d4f">human</text>
+  <text x="128" y="108" text-anchor="middle" font-size="7" fill="#6b5d4f">encrypted</text>
+  <line x1="60" y1="224" x2="196" y2="224" stroke="#c4b99a" stroke-width="2"/>
+</svg>
