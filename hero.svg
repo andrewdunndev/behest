@@ -1,0 +1,102 @@
+<svg viewBox="0 0 1200 430" xmlns="http://www.w3.org/2000/svg">
+  <rect x="0" y="0" width="1200" height="430" fill="#faf6ed" stroke="#2c2417" stroke-width="3"/>
+
+  <rect x="0" y="0" width="1200" height="36" fill="#2c2417"/>
+  <text x="16" y="24" font-family="'IBM Plex Mono', monospace" font-size="14" fill="#faf6ed" font-weight="bold">behest -- self-hosted credential relay</text>
+  <text x="1184" y="24" font-family="'IBM Plex Mono', monospace" font-size="11" fill="#c4b99a" text-anchor="end">device auth flow for everything else</text>
+
+  <!-- Server box -->
+  <rect x="60" y="80" width="220" height="200" fill="none" stroke="#2c2417" stroke-width="2"/>
+  <rect x="60" y="80" width="220" height="24" fill="#2c2417"/>
+  <text x="170" y="96" font-family="'IBM Plex Mono', monospace" font-size="10" fill="#faf6ed" text-anchor="middle" font-weight="bold">SERVER</text>
+
+  <!-- Server icon: terminal prompt -->
+  <text x="80" y="128" font-family="'IBM Plex Mono', monospace" font-size="11" fill="#2c2417">$_</text>
+  <rect x="80" y="136" width="180" height="40" fill="none" stroke="#c4b99a" stroke-width="1"/>
+  <text x="90" y="154" font-family="'IBM Plex Mono', monospace" font-size="9" fill="#6b5d4f">need: API token</text>
+  <text x="90" y="168" font-family="'IBM Plex Mono', monospace" font-size="9" fill="#6b5d4f">hint: settings > keys</text>
+
+  <!-- Key generation visual -->
+  <rect x="100" y="196" width="60" height="24" fill="none" stroke="#2c2417" stroke-width="1.5"/>
+  <text x="130" y="212" font-family="'IBM Plex Mono', monospace" font-size="8" fill="#2c2417" text-anchor="middle">X25519</text>
+  <text x="100" y="248" font-family="'IBM Plex Mono', monospace" font-size="9" fill="#6b5d4f">generate keypair</text>
+  <text x="100" y="262" font-family="'IBM Plex Mono', monospace" font-size="9" fill="#6b5d4f">poll until fulfilled</text>
+
+  <!-- Arrow: server -> broker -->
+  <line x1="280" y1="160" x2="390" y2="160" stroke="#2c2417" stroke-width="2"/>
+  <polygon points="390,155 400,160 390,165" fill="#2c2417"/>
+  <text x="335" y="152" font-family="'IBM Plex Mono', monospace" font-size="8" fill="#6b5d4f" text-anchor="middle">request</text>
+
+  <!-- Broker -->
+  <rect x="400" y="80" width="240" height="200" fill="none" stroke="#2c2417" stroke-width="2"/>
+  <rect x="400" y="80" width="240" height="24" fill="#2c2417"/>
+  <text x="520" y="96" font-family="'IBM Plex Mono', monospace" font-size="10" fill="#faf6ed" text-anchor="middle" font-weight="bold">BROKER</text>
+
+  <!-- Lock icon: broker stores only ciphertext -->
+  <rect x="480" y="130" width="80" height="60" fill="none" stroke="#2c2417" stroke-width="2.5"/>
+  <path d="M495 130 L495 118 Q520 95 545 118 L545 130" fill="none" stroke="#2c2417" stroke-width="2.5"/>
+  <circle cx="520" cy="156" r="6" fill="#2c2417"/>
+  <line x1="520" y1="162" x2="520" y2="172" stroke="#2c2417" stroke-width="2.5"/>
+
+  <text x="520" y="216" font-family="'IBM Plex Mono', monospace" font-size="9" fill="#6b5d4f" text-anchor="middle">stores only ciphertext</text>
+  <text x="520" y="232" font-family="'IBM Plex Mono', monospace" font-size="9" fill="#6b5d4f" text-anchor="middle">never sees plaintext</text>
+  <text x="520" y="252" font-family="'IBM Plex Mono', monospace" font-size="9" fill="#6b5d4f" text-anchor="middle">KV with TTL</text>
+
+  <!-- Arrow: broker -> human (notification) -->
+  <line x1="640" y1="140" x2="750" y2="140" stroke="#2c2417" stroke-width="2"/>
+  <polygon points="750,135 760,140 750,145" fill="#2c2417"/>
+  <text x="695" y="132" font-family="'IBM Plex Mono', monospace" font-size="8" fill="#6b5d4f" text-anchor="middle">notify</text>
+
+  <!-- Arrow: human -> broker (encrypted credential) -->
+  <line x1="760" y1="200" x2="650" y2="200" stroke="#2c2417" stroke-width="2"/>
+  <polygon points="650,195 640,200 650,205" fill="#2c2417"/>
+  <text x="695" y="218" font-family="'IBM Plex Mono', monospace" font-size="8" fill="#6b5d4f" text-anchor="middle">encrypted</text>
+
+  <!-- Arrow: broker -> server (return) -->
+  <line x1="400" y1="220" x2="290" y2="220" stroke="#2c2417" stroke-width="2"/>
+  <polygon points="290,215 280,220 290,225" fill="#2c2417"/>
+  <text x="340" y="238" font-family="'IBM Plex Mono', monospace" font-size="8" fill="#6b5d4f" text-anchor="middle">fulfilled</text>
+
+  <!-- Human + Agent -->
+  <rect x="760" y="80" width="400" height="200" fill="none" stroke="#2c2417" stroke-width="2"/>
+  <rect x="760" y="80" width="400" height="24" fill="#2c2417"/>
+  <text x="960" y="96" font-family="'IBM Plex Mono', monospace" font-size="10" fill="#faf6ed" text-anchor="middle" font-weight="bold">HUMAN + AGENT</text>
+
+  <!-- Person icon -->
+  <circle cx="830" cy="138" r="18" fill="none" stroke="#2c2417" stroke-width="2.5"/>
+  <path d="M808 185 Q808 162 830 162 Q852 162 852 185" fill="none" stroke="#2c2417" stroke-width="2.5"/>
+
+  <!-- Flow: notification -> get credential -> encrypt -> sign -> send -->
+  <text x="880" y="128" font-family="'IBM Plex Mono', monospace" font-size="10" fill="#2c2417">notification arrives</text>
+  <line x1="880" y1="134" x2="1140" y2="134" stroke="#c4b99a" stroke-width="0.8"/>
+  <text x="880" y="152" font-family="'IBM Plex Mono', monospace" font-size="10" fill="#2c2417">get credential</text>
+  <text x="880" y="168" font-family="'IBM Plex Mono', monospace" font-size="9" fill="#6b5d4f">  browser, MFA, wherever</text>
+  <line x1="880" y1="176" x2="1140" y2="176" stroke="#c4b99a" stroke-width="0.8"/>
+  <text x="880" y="194" font-family="'IBM Plex Mono', monospace" font-size="10" fill="#2c2417">encrypt + sign</text>
+  <text x="880" y="210" font-family="'IBM Plex Mono', monospace" font-size="9" fill="#6b5d4f">  NaCl box + Ed25519</text>
+  <line x1="880" y1="218" x2="1140" y2="218" stroke="#c4b99a" stroke-width="0.8"/>
+  <text x="880" y="236" font-family="'IBM Plex Mono', monospace" font-size="10" fill="#2c2417">send to broker</text>
+  <text x="880" y="252" font-family="'IBM Plex Mono', monospace" font-size="9" fill="#6b5d4f">  or: automation hook</text>
+
+  <!-- Security layers at bottom -->
+  <rect x="60" y="296" width="1100" height="44" fill="none" stroke="#c4b99a" stroke-width="1"/>
+  <text x="230" y="316" font-family="'IBM Plex Mono', monospace" font-size="9" fill="#2c2417" text-anchor="middle" font-weight="bold">bearer token</text>
+  <text x="230" y="330" font-family="'IBM Plex Mono', monospace" font-size="8" fill="#6b5d4f" text-anchor="middle">API access</text>
+  <line x1="400" y1="300" x2="400" y2="336" stroke="#c4b99a" stroke-width="1"/>
+  <text x="560" y="316" font-family="'IBM Plex Mono', monospace" font-size="9" fill="#2c2417" text-anchor="middle" font-weight="bold">Ed25519 signing</text>
+  <text x="560" y="330" font-family="'IBM Plex Mono', monospace" font-size="8" fill="#6b5d4f" text-anchor="middle">agent identity</text>
+  <line x1="720" y1="300" x2="720" y2="336" stroke="#c4b99a" stroke-width="1"/>
+  <text x="900" y="316" font-family="'IBM Plex Mono', monospace" font-size="9" fill="#2c2417" text-anchor="middle" font-weight="bold">E2E encryption</text>
+  <text x="900" y="330" font-family="'IBM Plex Mono', monospace" font-size="8" fill="#6b5d4f" text-anchor="middle">NaCl box, X25519</text>
+
+  <!-- Footer -->
+  <line x1="40" y1="360" x2="1160" y2="360" stroke="#c4b99a" stroke-width="1"/>
+  <text x="600" y="380" font-family="'IBM Plex Mono', monospace" font-size="10" fill="#6b5d4f" text-anchor="middle">no inbound ports -- broker sees only ciphertext -- three independent security layers</text>
+  <text x="590" y="408" text-anchor="middle" fill="#2c2417" font-family="'IBM Plex Mono', monospace" font-size="9" font-weight="600">Built with GitLab</text>
+  <g transform="translate(634, 397) scale(0.045)">
+    <path d="M282.83,170.73l-.27-.69-26.14-68.22a6.81,6.81,0,0,0-2.69-3.24,7,7,0,0,0-8,.43,7,7,0,0,0-2.32,3.52l-17.65,54H154.29l-17.65-54A6.86,6.86,0,0,0,134.32,99a7,7,0,0,0-8-.43,6.87,6.87,0,0,0-2.69,3.24L97.44,170l-.26.69a48.54,48.54,0,0,0,16.1,56.1l.09.07.24.17,39.82,29.82,19.7,14.91,12,9.06a8.07,8.07,0,0,0,9.76,0l12-9.06,19.7-14.91,40.06-30,.1-.08A48.56,48.56,0,0,0,282.83,170.73Z" fill="#E24329"/>
+    <path d="M282.83,170.73l-.27-.69a88.3,88.3,0,0,0-35.15,15.8L190,229.25c19.55,14.79,36.57,27.64,36.57,27.64l40.06-30,.1-.08A48.56,48.56,0,0,0,282.83,170.73Z" fill="#FC6D26"/>
+    <path d="M153.43,256.89l19.7,14.91,12,9.06a8.07,8.07,0,0,0,9.76,0l12-9.06,19.7-14.91S209.55,244,190,229.25C170.45,244,153.43,256.89,153.43,256.89Z" fill="#FCA326"/>
+    <path d="M132.58,185.84A88.19,88.19,0,0,0,97.44,170l-.26.69a48.54,48.54,0,0,0,16.1,56.1l.09.07.24.17,39.82,29.82s17-12.85,36.57-27.64Z" fill="#FC6D26"/>
+  </g>
+</svg>
