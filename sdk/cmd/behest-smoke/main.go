@@ -28,7 +28,7 @@ import (
 	"os"
 	"time"
 
-	behest "gitlab.com/dunn.dev/behest/behest/sdk"
+	behest "gitlab.com/nomograph/behest/sdk"
 	"golang.org/x/crypto/nacl/box"
 )
 

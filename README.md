@@ -215,7 +215,7 @@ import (
     "fmt"
     "os"
 
-    "gitlab.com/dunn.dev/behest/behest/sdk"
+    "gitlab.com/nomograph/behest/sdk"
 )
 
 func main() {

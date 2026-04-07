@@ -1,4 +1,4 @@
-module gitlab.com/dunn.dev/behest/behest/sdk
+module gitlab.com/nomograph/behest/sdk
 
 go 1.26.1
 
