@@ -6,6 +6,11 @@ stages:
 variables:
   CARGO_HOME: ${CI_PROJECT_DIR}/.cargo
   RUST_BACKTRACE: "1"
+  RUST_IMAGE: registry.gitlab.com/nomograph/pipeline/rust-cli:latest
+
+default:
+  tags:
+    - storr
 
 # --- Check ---
 
@@ -27,7 +32,7 @@ test-sdk:
 
 check-agent:
   stage: check
-  image: rust:1.85
+  image: $RUST_IMAGE
   script:
     - cd agent && cargo check
   cache:
@@ -74,7 +79,7 @@ build-macos-x86_64:
 
 build-linux-amd64:
   extends: .build-agent
-  image: rust:1.85
+  image: $RUST_IMAGE
   variables:
     TARGET: x86_64-unknown-linux-gnu
   script:
@@ -82,7 +87,7 @@ build-linux-amd64:
 
 build-linux-arm64:
   extends: .build-agent
-  image: rust:1.85
+  image: $RUST_IMAGE
   tags: [arm64]
   variables:
     TARGET: aarch64-unknown-linux-gnu
