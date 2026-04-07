@@ -70,6 +70,13 @@ but not fulfill them (requires the agent's Ed25519 private key, which
 never leaves Keychain). A compromised broker sees encrypted blobs (no
 plaintext). A network observer sees TLS.
 
+**IP-bound credentials:** behest delivers credentials as opaque bytes. It
+does not proxy network traffic. Most API tokens and bearer tokens work
+from any IP. If a credential is IP-bound (session cookies, IP-pinned
+tokens), ensure the requester shares an exit IP with the operator (e.g.
+via Tailscale or Cloudflare WARP). The `on_request_hook` can also obtain
+credentials from the requester's network directly (e.g. via SSH).
+
 ## Setup
 
 ### Prerequisites
