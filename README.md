@@ -1,4 +1,10 @@
+![hero](hero.svg)
+
 # behest
+
+[![pipeline](https://gitlab.com/nomograph/behest/badges/main/pipeline.svg)](https://gitlab.com/nomograph/behest/-/pipelines)
+[![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+![built with GitLab](https://img.shields.io/badge/built_with-GitLab-FC6D26?logo=gitlab)
 
 Device Authorization Flow for services that don't implement it.
 
