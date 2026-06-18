@@ -45,7 +45,7 @@ features = ["derive"]
 version = "6"
 
 [dependencies.toml]
-version = "0.8"
+version = "0.9"
 
 [dependencies.tracing]
 version = "0.1"
