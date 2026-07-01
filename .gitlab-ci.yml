@@ -16,7 +16,7 @@ default:
 
 typecheck-worker:
   stage: check
-  image: node:22-slim
+  image: node:22-slim@sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4
   script:
     - cd worker && npm ci && npx tsc --noEmit
   cache:
@@ -26,7 +26,7 @@ typecheck-worker:
 
 test-sdk:
   stage: check
-  image: golang:1.26
+  image: golang:1.26@sha256:f96cc555eb8db430159a3aa6797cd5bae561945b7b0fe7d0e284c63a3b291609
   script:
     - cd sdk && go test -v ./...
 
@@ -106,7 +106,7 @@ build-linux-arm64:
 
 release:
   stage: release
-  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  image: registry.gitlab.com/gitlab-org/release-cli:latest@sha256:3f52d526f48e8d10625c722fa6d6423ee82aadeae1b1aa91f07b62551d96dacf
   rules:
     - if: $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+/
   needs:
