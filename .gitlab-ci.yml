@@ -16,7 +16,7 @@ default:
 
 typecheck-worker:
   stage: check
-  image: node:22-slim@sha256:53ada149d435c38b14476cb57e4a7da73c15595aba79bd6971b547ceb6d018bf
+  image: node:22-slim@sha256:c29352e5563688e726158e23480bc2d4bd0af23bbdd055f8b837a12ecfd6a2a1
   script:
     - cd worker && npm ci && npx tsc --noEmit
   cache:
