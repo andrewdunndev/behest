@@ -24,7 +24,7 @@ base64 = "0.22"
 
 # System tray + event loop
 tray-icon = "0.19"
-tao = { version = "0.33", features = ["rwh_06"] }
+tao = { version = "0.35", features = ["rwh_06"] }
 
 # Desktop notifications
 notify-rust = "4"
