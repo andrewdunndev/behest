@@ -19,7 +19,7 @@ serde_json = "1"
 # Crypto
 crypto_box = "0.9"       # NaCl box (X25519 + XSalsa20-Poly1305)
 ed25519-dalek = { version = "2", features = ["rand_core"] }  # Agent identity signing
-rand = "0.8"
+rand = "0.10"
 base64 = "0.22"
 
 # System tray + event loop

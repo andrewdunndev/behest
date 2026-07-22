@@ -1,8 +1,8 @@
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use crypto_box::aead::{Aead, OsRng};
+use crypto_box::aead::rand_core::RngCore;
 use crypto_box::{PublicKey, SalsaBox, SecretKey};
-use rand::RngCore;
 use serde::Deserialize;
 use tracing::info;
 
