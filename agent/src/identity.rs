@@ -1,7 +1,7 @@
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use crypto_box::aead::OsRng;
 use ed25519_dalek::{Signer, SigningKey};
-use rand::rngs::OsRng;
 
 const KEYCHAIN_SERVICE: &str = "dev.behest.agent";
 const KEYCHAIN_ACCOUNT: &str = "signing-key";
