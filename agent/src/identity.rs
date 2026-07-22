@@ -2,6 +2,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use crypto_box::aead::OsRng;
 use ed25519_dalek::{Signer, SigningKey};
+use crypto_box::aead::rand_core::RngCore;
 
 const KEYCHAIN_SERVICE: &str = "dev.behest.agent";
 const KEYCHAIN_ACCOUNT: &str = "signing-key";
@@ -14,7 +15,14 @@ pub struct AgentIdentity {
 impl AgentIdentity {
     /// Generate a new identity (Ed25519 keypair).
     pub fn generate() -> Self {
-        let signing_key = SigningKey::generate(&mut OsRng);
+        // ed25519-dalek v3 tightened `SigningKey::generate`'s bound to a
+        // rand_core 0.10 `CryptoRng`, which `rand` 0.8's `OsRng` no longer
+        // implements. Generate the seed bytes directly (this is exactly
+        // what `SigningKey::generate` does internally) and build the key
+        // via `from_bytes` instead.
+        let mut seed = [0u8; 32];
+        OsRng.fill_bytes(&mut seed);
+        let signing_key = SigningKey::from_bytes(&seed);
         Self { signing_key }
     }
 
