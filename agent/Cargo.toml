@@ -10,7 +10,7 @@ license = "MIT"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "process", "net", "sync"] }
 
 # HTTP client
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.13", features = ["json"] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -24,7 +24,7 @@ base64 = "0.22"
 
 # System tray + event loop
 tray-icon = "0.19"
-tao = { version = "0.33", features = ["rwh_06"] }
+tao = { version = "0.35", features = ["rwh_06"] }
 
 # Desktop notifications
 notify-rust = "4"
@@ -45,7 +45,7 @@ features = ["derive"]
 version = "6"
 
 [dependencies.toml]
-version = "0.8"
+version = "1.0"
 
 [dependencies.tracing]
 version = "0.1"

@@ -16,7 +16,7 @@ default:
 
 typecheck-worker:
   stage: check
-  image: node:22-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3
+  image: node:24-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d
   script:
     - cd worker && npm ci && npx tsc --noEmit
   cache:
@@ -26,7 +26,7 @@ typecheck-worker:
 
 test-sdk:
   stage: check
-  image: golang:1.26@sha256:ae5a2316d12f3e78fd99177dad452e6ad4f240af2d71d57b480c3477f250fec6
+  image: golang:1.26@sha256:3aff6657219a4d9c14e27fb1d8976c49c29fddb70ba835014f477e1c70636647
   script:
     - cd sdk && go test -v ./...
 
