@@ -2,6 +2,8 @@ stages:
   - check
   - build
   - release
+  - verdict
+  - gate
 
 variables:
   CARGO_HOME: ${CI_PROJECT_DIR}/.cargo
@@ -11,6 +13,30 @@ variables:
 default:
   tags:
     - storr
+
+# osv-verdict + automerge-gate (renovate single-maintainer campaign,
+# Go OSV coverage-gap closure): behest had NO vulnerability scanning
+# at all, in a repo that is a network-facing credential broker. Scoped
+# to sdk/ (scan_path) rather than the whole tree: this closes the Go
+# gap that motivated the check; agent/ (Rust, gtk3-rs bindings) and
+# worker/ (npm) carry their own separate, larger finding sets --
+# several of them permanently-unfixable "upstream unmaintained" RUSTSEC
+# advisories against the abandoned gtk3-rs stack -- that need an
+# operator decision (ignore-list policy vs. a GUI framework migration)
+# before they can gate main. Tracked as follow-up, not silently
+# dropped. See sdk/osv-scanner.toml for the one accepted, non-reachable
+# finding this scope still carries (GO-2026-5932, openpgp is
+# unmaintained upstream with no fix; sdk only imports nacl/box).
+# osv-verdict emits CHECK_OSV via dotenv (newly-introduced findings
+# only on MRs); automerge-gate consumes it over needs: and blocks
+# unless every required check is present and pass.
+include:
+  - component: gitlab.com/nomograph/pipeline/osv-verdict@v5.6.0
+    inputs:
+      scan_path: "sdk"
+  - component: gitlab.com/nomograph/pipeline/automerge-gate@v5.6.0
+    inputs:
+      required-checks: "osv"
 
 # --- Check ---
 
