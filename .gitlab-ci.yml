@@ -31,10 +31,10 @@ default:
 # only on MRs); automerge-gate consumes it over needs: and blocks
 # unless every required check is present and pass.
 include:
-  - component: gitlab.com/nomograph/pipeline/osv-verdict@v5.6.0
+  - component: gitlab.com/nomograph/pipeline/osv-verdict@v5.7.0
     inputs:
       scan_path: "sdk"
-  - component: gitlab.com/nomograph/pipeline/automerge-gate@v5.6.0
+  - component: gitlab.com/nomograph/pipeline/automerge-gate@v5.7.0
     inputs:
       required-checks: "osv"
 
