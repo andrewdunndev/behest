@@ -8,7 +8,13 @@ stages:
 variables:
   CARGO_HOME: ${CI_PROJECT_DIR}/.cargo
   RUST_BACKTRACE: "1"
-  RUST_IMAGE: registry.gitlab.com/nomograph/pipeline/rust-cli:latest
+  # Pinned to a real version tag + digest per ADOPTION.md's
+  # <name>:<semver>@sha256:<digest> convention for self-published images.
+  # Was ":latest" behind $RUST_IMAGE indirection (image: $RUST_IMAGE at the
+  # three usage sites below) -- invisible to Renovate's built-in docker
+  # manager either way (no built-in manager resolves a $VAR-indirected
+  # image: value), so this floated untracked with no MR trail.
+  RUST_IMAGE: registry.gitlab.com/nomograph/pipeline/rust-cli:v5.10.0@sha256:ad44848a2175f7068f8f05106d05e887d111128fc75f40081a19dddaf4b4ea2b
 
 default:
   tags:
