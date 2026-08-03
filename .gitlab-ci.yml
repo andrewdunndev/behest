@@ -30,13 +30,35 @@ default:
 # osv-verdict emits CHECK_OSV via dotenv (newly-introduced findings
 # only on MRs); automerge-gate consumes it over needs: and blocks
 # unless every required check is present and pass.
+#
+# secret-verdict (first secret detection this repo has ever run): behest
+# is a network-facing credential broker, so a committed credential is the
+# failure mode it can least afford. GitLab's own Secret-Detection template
+# cannot block one -- its analyzer runs gitleaks with `--exit-code 0` and
+# exits 0 holding findings -- so this is the verdict component, which
+# reads the report and blocks on a non-empty vulnerabilities array. Unlike
+# osv-verdict it also exits 1, so a leak reddens the pipeline directly.
+# Whole-tree, not scoped: osv-verdict's `sdk` scope is about which
+# dependency trees are triageable today; a leaked credential in agent/ or
+# worker/ is not less leaked.
+#
+# All three pins move to v5.10.0 together, deliberately: automerge-gate
+# only grew its `needs:` on the secret job in v5.10.0 (without it
+# CHECK_SECRET never reaches the gate and requiring "secret" fails closed
+# forever), and the v5.8.0+ gate also fires on bare branch pushes. Leaving
+# osv-verdict at v5.7.0 -- which does not -- would leave the gate demanding
+# a CHECK_OSV that never emits on every branch push. The verdict pin has
+# to move with the gate.
 include:
-  - component: gitlab.com/nomograph/pipeline/osv-verdict@v5.7.0
+  - component: gitlab.com/nomograph/pipeline/osv-verdict@v5.10.0
     inputs:
       scan_path: "sdk"
-  - component: gitlab.com/nomograph/pipeline/automerge-gate@v5.7.0
+  - component: gitlab.com/nomograph/pipeline/secret-verdict@v5.10.0
     inputs:
-      required-checks: "osv"
+      stage: verdict
+  - component: gitlab.com/nomograph/pipeline/automerge-gate@v5.10.0
+    inputs:
+      required-checks: "osv,secret"
 
 # --- Check ---
 
