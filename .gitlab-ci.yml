@@ -68,8 +68,21 @@ include:
 
 # --- Check ---
 
+# Jobs with no rules: inherit the legacy `only: [branches, tags]` default,
+# which SKIPS merge_request_event pipelines -- these three check jobs
+# carried no rules at all, so they ran on pushes to main but were silently
+# absent from every MR pipeline. The MR pipeline is the head pipeline the
+# automerge-gate component's only_allow_merge_if_pipeline_succeeds reads,
+# so a job absent from it does not gate the merge. Same bug, same fix as
+# nomograph/reference's .on-mr-and-main.
+.on-mr-and-main:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
 typecheck-worker:
   stage: check
+  extends: .on-mr-and-main
   image: node:24-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03
   script:
     - cd worker && npm ci && npx tsc --noEmit
@@ -80,12 +93,14 @@ typecheck-worker:
 
 test-sdk:
   stage: check
+  extends: .on-mr-and-main
   image: golang:1.26@sha256:b004b9c35c68c8bcf5420e5164423073a1de5f0c7d4b9121784780ceb7f9961f
   script:
     - cd sdk && go test -v ./...
 
 check-agent:
   stage: check
+  extends: .on-mr-and-main
   image: $RUST_IMAGE
   before_script:
     - apt-get update && apt-get install -y --no-install-recommends
