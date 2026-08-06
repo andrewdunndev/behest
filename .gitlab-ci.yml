@@ -94,7 +94,7 @@ typecheck-worker:
 test-sdk:
   stage: check
   extends: .on-mr-and-main
-  image: golang:1.26@sha256:b004b9c35c68c8bcf5420e5164423073a1de5f0c7d4b9121784780ceb7f9961f
+  image: golang:1.26@sha256:2005724102f45917a63e9d092fc0e4ea56ea575048ce147caad5f5f61502c365
   script:
     - cd sdk && go test -v ./...
 
