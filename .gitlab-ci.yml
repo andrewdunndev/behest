@@ -56,13 +56,13 @@ default:
 # a CHECK_OSV that never emits on every branch push. The verdict pin has
 # to move with the gate.
 include:
-  - component: gitlab.com/nomograph/pipeline/osv-verdict@v5.12.0
+  - component: gitlab.com/nomograph/pipeline/osv-verdict@v5.13.0
     inputs:
       scan_path: "sdk"
-  - component: gitlab.com/nomograph/pipeline/secret-verdict@v5.12.0
+  - component: gitlab.com/nomograph/pipeline/secret-verdict@v5.13.0
     inputs:
       stage: verdict
-  - component: gitlab.com/nomograph/pipeline/automerge-gate@v5.12.0
+  - component: gitlab.com/nomograph/pipeline/automerge-gate@v5.13.0
     inputs:
       required-checks: "osv,secret"
 
