@@ -42,7 +42,7 @@ version = "4"
 features = ["derive"]
 
 [dependencies.dirs]
-version = "6"
+version = "7"
 
 [dependencies.toml]
 version = "1.0"
