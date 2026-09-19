@@ -23,7 +23,7 @@ rand = "0.10"
 base64 = "0.23"
 
 # System tray + event loop
-tray-icon = "0.24"
+tray-icon = "0.25"
 tao = { version = "0.37", features = ["rwh_06"] }
 
 # Desktop notifications
