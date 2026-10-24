@@ -18,7 +18,7 @@ variables:
 
 default:
   tags:
-    - storr
+    - anvil
 
 # osv-verdict + automerge-gate (renovate single-maintainer campaign,
 # Go OSV coverage-gap closure): behest had NO vulnerability scanning
